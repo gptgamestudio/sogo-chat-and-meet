@@ -1,0 +1,154 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with personal and dating preferences",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Unique auth UID of the user" },
+        "displayName": { "type": "string", "description": "Public name or nickname" },
+        "photoUrl": { "type": "string", "description": "Avatar/profile photo URL" },
+        "birthday": { "type": "string", "description": "Birthday in YYYY-MM-DD format" },
+        "age": { "type": "integer", "description": "Age of user automatically calculated from birthday, 18+ required" },
+        "gender": { "type": "string", "description": "Gender identity" },
+        "country": { "type": "string", "description": "Country of residence" },
+        "city": { "type": "string", "description": "Optional city" },
+        "aboutMe": { "type": "string", "description": "Personal bio and about me" },
+        "personality": { "type": "string", "description": "Personality archetype or traits" },
+        "interests": { "type": "array", "description": "List of user interests and hobbies" },
+        "isOnline": { "type": "boolean", "description": "Whether user is currently active" },
+        "role": { "type": "string", "enum": ["member"], "description": "User role, defaults to member and cannot be escalated" },
+        "lastActive": { "type": "string", "format": "date-time", "description": "Timestamp of last presence activity" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account profile creation time" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last profile update time" }
+      },
+      "required": ["userId", "displayName", "age", "gender", "country", "createdAt", "updatedAt"]
+    },
+    "UserPresence": {
+      "title": "UserPresence",
+      "description": "Real-time online status and last seen timestamp for a member",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Unique auth UID of the user" },
+        "isOnline": { "type": "boolean", "description": "Whether user is currently connected" },
+        "lastSeen": { "type": "string", "format": "date-time", "description": "Timestamp of last heartbeat" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last presence update time" }
+      },
+      "required": ["userId", "isOnline", "lastSeen", "updatedAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Direct chat thread between two members",
+      "type": "object",
+      "properties": {
+        "conversationId": { "type": "string", "description": "Unique conversation identifier" },
+        "participantUids": { "type": "array", "description": "Array of exactly 2 member UIDs" },
+        "lastMessage": { "type": "string", "description": "Snippet of latest message" },
+        "lastMessageSenderId": { "type": "string", "description": "UID of sender of last message" },
+        "lastMessageTimestamp": { "type": "string", "format": "date-time", "description": "Timestamp of last message" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp" }
+      },
+      "required": ["conversationId", "participantUids", "createdAt", "updatedAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Individual chat message within a conversation",
+      "type": "object",
+      "properties": {
+        "messageId": { "type": "string", "description": "Unique message ID" },
+        "conversationId": { "type": "string", "description": "Parent conversation ID" },
+        "senderId": { "type": "string", "description": "UID of the message sender" },
+        "receiverId": { "type": "string", "description": "UID of recipient" },
+        "participantUids": { "type": "array", "description": "Denormalized UIDs of both conversation members" },
+        "content": { "type": "string", "description": "Text body or caption" },
+        "type": { "type": "string", "enum": ["TEXT", "IMAGE", "VOICE", "STICKER"], "description": "Message media type" },
+        "mediaUrl": { "type": "string", "description": "Optional image/audio attachment URL" },
+        "isRead": { "type": "boolean", "description": "Read receipt status" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Sent timestamp" }
+      },
+      "required": ["messageId", "conversationId", "senderId", "receiverId", "participantUids", "content", "type", "createdAt"]
+    },
+    "UserBlock": {
+      "title": "UserBlock",
+      "description": "Record of a member blocking another member",
+      "type": "object",
+      "properties": {
+        "blockId": { "type": "string", "description": "Unique block ID" },
+        "blockerId": { "type": "string", "description": "UID of user who initiated block" },
+        "blockedId": { "type": "string", "description": "UID of blocked member" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Block timestamp" }
+      },
+      "required": ["blockId", "blockerId", "blockedId", "createdAt"]
+    },
+    "UserReport": {
+      "title": "UserReport",
+      "description": "Safety report and moderation record submitted against a member",
+      "type": "object",
+      "properties": {
+        "reportId": { "type": "string", "description": "Unique report ID" },
+        "reporterId": { "type": "string", "description": "UID of reporter" },
+        "reportedId": { "type": "string", "description": "UID of reported user" },
+        "reason": { "type": "string", "description": "Reason category" },
+        "details": { "type": "string", "description": "Additional context" },
+        "status": { "type": "string", "enum": ["PENDING", "REVIEWED", "DISMISSED"], "description": "Moderation status" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Report timestamp" }
+      },
+      "required": ["reportId", "reporterId", "reportedId", "reason", "createdAt"]
+    },
+    "UserNotification": {
+      "title": "UserNotification",
+      "description": "Private member notification for messages or interactions",
+      "type": "object",
+      "properties": {
+        "notificationId": { "type": "string", "description": "Unique notification ID" },
+        "userId": { "type": "string", "description": "Target recipient UID" },
+        "title": { "type": "string", "description": "Notification title" },
+        "body": { "type": "string", "description": "Notification message body" },
+        "type": { "type": "string", "enum": ["CHAT_MESSAGE", "PROFILE_VISIT", "SYSTEM"], "description": "Notification type" },
+        "data": { "type": "string", "description": "Associated metadata reference or deep link ID" },
+        "isRead": { "type": "boolean", "description": "Whether notification has been read" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Created timestamp" }
+      },
+      "required": ["notificationId", "userId", "title", "body", "type", "isRead", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles visible to authenticated members for dating discovery, modifiable only by owner"
+    },
+    "/user_presence/{userId}": {
+      "schema": { "$ref": "#/entities/UserPresence" },
+      "description": "Real-time online presence and last seen state, updated by the owner user only"
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Private 1-on-1 conversations between two matched members"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Private messages exchanged between conversation participants"
+    },
+    "/user_blocks/{blockId}": {
+      "schema": { "$ref": "#/entities/UserBlock" },
+      "description": "Personal blocks preventing interaction, accessible only to the blocker or blocked participant"
+    },
+    "/blocks/{blockId}": {
+      "schema": { "$ref": "#/entities/UserBlock" },
+      "description": "Legacy alias for user_blocks ensuring seamless backward compatibility"
+    },
+    "/user_reports/{reportId}": {
+      "schema": { "$ref": "#/entities/UserReport" },
+      "description": "User safety reports and moderation records"
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/UserReport" },
+      "description": "Legacy alias for user_reports ensuring seamless backward compatibility"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/UserNotification" },
+      "description": "Private member notifications, readable and manageable only by the recipient user"
+    }
+  }
+}

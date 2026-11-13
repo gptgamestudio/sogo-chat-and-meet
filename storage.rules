@@ -1,0 +1,126 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Default deny all access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string &&
+             id.size() > 0 &&
+             id.size() <= 128 &&
+             id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidFileName(fileName) {
+      return fileName is string &&
+             fileName.size() > 0 &&
+             fileName.size() <= 128 &&
+             !fileName.matches('.*\\.\\..*');
+    }
+
+    function isValidImage() {
+      return request.resource != null &&
+             request.resource.size is int &&
+             request.resource.size > 0 &&
+             request.resource.size <= 5 * 1024 * 1024 && // Max 5MB
+             request.resource.contentType is string &&
+             request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
+    function isValidVoice() {
+      return request.resource != null &&
+             request.resource.size is int &&
+             request.resource.size > 0 &&
+             request.resource.size <= 10 * 1024 * 1024 && // Max 10MB
+             request.resource.contentType is string &&
+             request.resource.contentType.matches('audio/(mp4|m4a|x-m4a|aac|ogg|mpeg|mp3|webm|3gpp|wav|x-wav)');
+    }
+
+    function isBlockedBetween(uid1, uid2) {
+      return firestore.exists(/databases/(default)/documents/user_blocks/$('block_' + uid1 + '_' + uid2)) ||
+             firestore.exists(/databases/(default)/documents/user_blocks/$('block_' + uid2 + '_' + uid1)) ||
+             firestore.exists(/databases/(default)/documents/blocks/$('block_' + uid1 + '_' + uid2)) ||
+             firestore.exists(/databases/(default)/documents/blocks/$('block_' + uid2 + '_' + uid1));
+    }
+
+    function isParticipantListBlocked(participants) {
+      return participants is list &&
+             participants.size() == 2 &&
+             isBlockedBetween(participants[0], participants[1]);
+    }
+
+    function canReadConversationMedia(conversationId) {
+      return isSignedIn() &&
+             isValidId(conversationId) &&
+             firestore.exists(/databases/(default)/documents/conversations/$(conversationId)) &&
+             request.auth.uid in firestore.get(/databases/(default)/documents/conversations/$(conversationId)).data.participantUids;
+    }
+
+    function canUploadConversationMedia(conversationId) {
+      return canReadConversationMedia(conversationId) &&
+             !isParticipantListBlocked(firestore.get(/databases/(default)/documents/conversations/$(conversationId)).data.participantUids);
+    }
+
+    // 1. Profile photos:
+    // Path: /profile_photos/{userId}/{fileName}
+    // Read: Any authenticated member who is not blocked can view profile photos
+    // Create/Update/Delete: Only the profile owner can upload or remove their own photos
+    match /profile_photos/{userId}/{fileName} {
+      allow read: if isSignedIn() &&
+                     isValidId(userId) &&
+                     isValidFileName(fileName) &&
+                     !isBlockedBetween(request.auth.uid, userId);
+
+      allow create, update: if isOwner(userId) &&
+                               isValidId(userId) &&
+                               isValidFileName(fileName) &&
+                               isValidImage();
+
+      allow delete: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidFileName(fileName);
+    }
+
+    // 2. Chat photos:
+    // Path: /chat_photos/{conversationId}/{fileName}
+    // Read: Only conversation participants can download chat photos
+    // Create/Update: Only non-blocked conversation participants can upload chat images
+    match /chat_photos/{conversationId}/{fileName} {
+      allow read: if isValidFileName(fileName) &&
+                     canReadConversationMedia(conversationId);
+
+      allow create, update: if isValidFileName(fileName) &&
+                               canUploadConversationMedia(conversationId) &&
+                               isValidImage();
+
+      allow delete: if false; // Messages are immutable for integrity
+    }
+
+    // 3. Voice messages:
+    // Path: /voice_messages/{conversationId}/{fileName}
+    // Read: Only conversation participants can listen to voice notes
+    // Create/Update: Only non-blocked conversation participants can upload audio recordings
+    match /voice_messages/{conversationId}/{fileName} {
+      allow read: if isValidFileName(fileName) &&
+                     canReadConversationMedia(conversationId);
+
+      allow create, update: if isValidFileName(fileName) &&
+                               canUploadConversationMedia(conversationId) &&
+                               isValidVoice();
+
+      allow delete: if false; // Voice notes are immutable for integrity
+    }
+  }
+}

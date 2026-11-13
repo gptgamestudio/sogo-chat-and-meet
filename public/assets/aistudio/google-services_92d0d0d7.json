@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "43721053011",
+    "project_id": "sogo-chat-and-meet",
+    "storage_bucket": "sogo-chat-and-meet.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:43721053011:android:690f37b2252845cdb947a6",
+        "android_client_info": {
+          "package_name": "com.sogo.chatandmeet"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "43721053011-3l2r8c2f159ok6lh59akqf0larr9haqm.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCmf_A-4G_hdPgNGwfyQqqC0TbB2H3M_Ds"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "43721053011-3l2r8c2f159ok6lh59akqf0larr9haqm.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "SOGO CHAT AND MEET",
+  "description": "Premium Filipino dating and private communication application.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
