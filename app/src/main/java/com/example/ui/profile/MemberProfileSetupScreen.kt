@@ -91,6 +91,75 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.util.Calendar
+import java.util.GregorianCalendar
+
+object BirthdayValidator {
+    fun isLeapYear(year: Int): Boolean {
+        return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    }
+
+    fun daysInMonth(year: Int, month: Int): Int {
+        return when (month) {
+            1, 3, 5, 7, 8, 10, 12 -> 31
+            4, 6, 9, 11 -> 30
+            2 -> if (isLeapYear(year)) 29 else 28
+            else -> 0
+        }
+    }
+
+    fun isValidCalendarDate(year: Int, month: Int, day: Int): Boolean {
+        if (year < 1900 || month !in 1..12) return false
+        val maxDay = daysInMonth(year, month)
+        return day in 1..maxDay
+    }
+
+    fun parseBirthday(birthday: String?): Triple<Int, Int, Int>? {
+        if (birthday.isNullOrBlank()) return null
+        val parts = birthday.trim().split("-")
+        if (parts.size != 3) return null
+        val year = parts[0].toIntOrNull() ?: return null
+        val month = parts[1].toIntOrNull() ?: return null
+        val day = parts[2].toIntOrNull() ?: return null
+        if (!isValidCalendarDate(year, month, day)) return null
+        return Triple(year, month, day)
+    }
+
+    fun calculateAge(
+        birthYear: Int,
+        birthMonth: Int,
+        birthDay: Int,
+        now: Calendar = Calendar.getInstance()
+    ): Int? {
+        if (!isValidCalendarDate(birthYear, birthMonth, birthDay)) return null
+        val birthDate = GregorianCalendar(birthYear, birthMonth - 1, birthDay).apply {
+            isLenient = false
+        }
+        val today = GregorianCalendar(
+            now.get(Calendar.YEAR),
+            now.get(Calendar.MONTH),
+            now.get(Calendar.DAY_OF_MONTH)
+        )
+        if (birthDate.after(today)) return null
+
+        var age = today.get(Calendar.YEAR) - birthYear
+        val curMonth = today.get(Calendar.MONTH) + 1
+        val curDay = today.get(Calendar.DAY_OF_MONTH)
+        if (curMonth < birthMonth || (curMonth == birthMonth && curDay < birthDay)) {
+            age--
+        }
+        return age
+    }
+
+    fun isEligibleAdult(
+        birthYear: Int,
+        birthMonth: Int,
+        birthDay: Int,
+        now: Calendar = Calendar.getInstance()
+    ): Boolean {
+        val age = calculateAge(birthYear, birthMonth, birthDay, now) ?: return false
+        return age in 18..120
+    }
+}
 
 private val PERSONALITY_OPTIONS = listOf(
     "Romantic & Thoughtful",
@@ -133,6 +202,9 @@ private val AVATAR_PRESETS = listOf(
 @Composable
 fun MemberProfileSetupScreen(
     initialProfile: UserProfile? = null,
+    isSaving: Boolean = false,
+    externalErrorMessage: String? = null,
+    onDismissError: () -> Unit = {},
     onSaveProfile: (
         displayName: String,
         birthday: String,
@@ -150,62 +222,70 @@ fun MemberProfileSetupScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var displayName by remember { mutableStateOf(initialProfile?.displayName ?: "") }
-    var photoUrl by remember { mutableStateOf(initialProfile?.photoUrl ?: AVATAR_PRESETS[0]) }
-    var gender by remember { mutableStateOf(initialProfile?.gender ?: "Female") }
-    var country by remember { mutableStateOf(initialProfile?.country ?: "Philippines") }
-    var city by remember { mutableStateOf(initialProfile?.city ?: "Makati") }
-    var aboutMe by remember { mutableStateOf(initialProfile?.aboutMe ?: "") }
-    var selectedPersonality by remember {
+    var displayName by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.displayName ?: "") }
+    var photoUrl by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.photoUrl ?: AVATAR_PRESETS[0]) }
+    var gender by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.gender ?: "Female") }
+    var country by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.country ?: "Philippines") }
+    var city by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.city ?: "Makati") }
+    var aboutMe by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.aboutMe ?: "") }
+    var selectedPersonality by remember(initialProfile?.userId) {
         mutableStateOf(initialProfile?.personality ?: PERSONALITY_OPTIONS[0])
     }
-    var selectedInterests by remember {
+    var selectedInterests by remember(initialProfile?.userId) {
         mutableStateOf(initialProfile?.interests ?: listOf("Coffee & Kape", "Travel & Beach"))
     }
+    var localErrorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Birthday and Age State (Defaults to 24 years ago today)
+    // Birthday and Age State: restore saved birthday when editing, default to 24 years ago for new users
     val today = remember { Calendar.getInstance() }
-    val defaultBirthYear = today.get(Calendar.YEAR) - 24
-    var birthYear by remember { mutableIntStateOf(defaultBirthYear) }
-    var birthMonth by remember { mutableIntStateOf(today.get(Calendar.MONTH) + 1) } // 1-12
-    var birthDay by remember { mutableIntStateOf(today.get(Calendar.DAY_OF_MONTH)) } // 1-31
+    val parsedBirthday = remember(initialProfile?.userId, initialProfile?.birthday) {
+        BirthdayValidator.parseBirthday(initialProfile?.birthday)
+    }
+    val defaultYear = today.get(Calendar.YEAR) - 24
+    val defaultMonth = today.get(Calendar.MONTH) + 1
+    val defaultDay = today.get(Calendar.DAY_OF_MONTH)
+        .coerceAtMost(BirthdayValidator.daysInMonth(defaultYear, defaultMonth))
 
-    // Automatically Calculate Age from Birthday (Never allow false manual entry)
-    val calculatedAge by remember {
-        derivedStateOf {
-            val now = Calendar.getInstance()
-            val curYear = now.get(Calendar.YEAR)
-            val curMonth = now.get(Calendar.MONTH) + 1
-            val curDay = now.get(Calendar.DAY_OF_MONTH)
-
-            var age = curYear - birthYear
-            if (curMonth < birthMonth || (curMonth == birthMonth && curDay < birthDay)) {
-                age--
-            }
-            age
-        }
+    var birthYear by remember(initialProfile?.userId, initialProfile?.birthday) {
+        mutableIntStateOf(parsedBirthday?.first ?: defaultYear)
+    }
+    var birthMonth by remember(initialProfile?.userId, initialProfile?.birthday) {
+        mutableIntStateOf(parsedBirthday?.second ?: defaultMonth)
+    }
+    var birthDay by remember(initialProfile?.userId, initialProfile?.birthday) {
+        mutableIntStateOf(parsedBirthday?.third ?: defaultDay)
     }
 
-    val isAdultEligible = calculatedAge >= 18
+    val maxDaysInSelectedMonth by remember {
+        derivedStateOf { BirthdayValidator.daysInMonth(birthYear, birthMonth) }
+    }
+    val isValidBirthDate by remember {
+        derivedStateOf { BirthdayValidator.isValidCalendarDate(birthYear, birthMonth, birthDay) }
+    }
+    val calculatedAge by remember {
+        derivedStateOf { BirthdayValidator.calculateAge(birthYear, birthMonth, birthDay) }
+    }
+    val isAdultEligible by remember {
+        derivedStateOf { BirthdayValidator.isEligibleAdult(birthYear, birthMonth, birthDay) }
+    }
     val birthdayString = "%04d-%02d-%02d".format(birthYear, birthMonth, birthDay)
 
     var isProcessingPhoto by remember { mutableStateOf(false) }
-    var isSubmitting by remember { mutableStateOf(false) }
 
-    // Android Photo Picker launcher
+    // Android Photo Picker launcher (inline compressed JPEG checked against Firestore photoUrl limit)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
             coroutineScope.launch {
                 isProcessingPhoto = true
+                localErrorMessage = null
                 val compressedDataUrl = withContext(Dispatchers.IO) {
                     try {
                         context.contentResolver.openInputStream(uri)?.use { stream ->
                             val bitmap = BitmapFactory.decodeStream(stream)
                             if (bitmap != null) {
-                                // Scale down to reasonable avatar size (max 400x400)
-                                val maxDimension = 400
+                                val maxDimension = 320
                                 val scale = (maxDimension.toFloat() / maxOf(bitmap.width, bitmap.height)).coerceAtMost(1f)
                                 val scaled = Bitmap.createScaledBitmap(
                                     bitmap,
@@ -214,9 +294,15 @@ fun MemberProfileSetupScreen(
                                     true
                                 )
                                 val baos = ByteArrayOutputStream()
-                                scaled.compress(Bitmap.CompressFormat.JPEG, 75, baos)
-                                val bytes = baos.toByteArray()
-                                "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+                                var quality = 70
+                                var encoded: String
+                                do {
+                                    baos.reset()
+                                    scaled.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+                                    encoded = "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                                    quality -= 15
+                                } while (encoded.length > 60000 && quality >= 25)
+                                if (encoded.length <= 60000) encoded else null
                             } else null
                         }
                     } catch (e: Exception) {
@@ -225,6 +311,8 @@ fun MemberProfileSetupScreen(
                 }
                 if (compressedDataUrl != null) {
                     photoUrl = compressedDataUrl
+                } else {
+                    localErrorMessage = "Selected image could not fit profile size limits. Choose a smaller photo or preset."
                 }
                 isProcessingPhoto = false
             }
@@ -441,7 +529,7 @@ fun MemberProfileSetupScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Date Selectors: Year, Month, Day
+                    // Date Selectors: Month, Day (clamped to month/leap-year), Year
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -449,13 +537,18 @@ fun MemberProfileSetupScreen(
                         // Month Dropdown
                         MonthDropdown(
                             selectedMonth = birthMonth,
-                            onMonthSelected = { birthMonth = it },
+                            onMonthSelected = { newMonth ->
+                                birthMonth = newMonth
+                                val maxDay = BirthdayValidator.daysInMonth(birthYear, newMonth)
+                                if (birthDay > maxDay) birthDay = maxDay
+                            },
                             modifier = Modifier.weight(1.3f)
                         )
 
-                        // Day Dropdown
+                        // Day Dropdown (only valid calendar days for selected month/year)
                         DayDropdown(
                             selectedDay = birthDay,
+                            maxDays = maxDaysInSelectedMonth,
                             onDaySelected = { birthDay = it },
                             modifier = Modifier.weight(0.9f)
                         )
@@ -463,7 +556,11 @@ fun MemberProfileSetupScreen(
                         // Year Dropdown
                         YearDropdown(
                             selectedYear = birthYear,
-                            onYearSelected = { birthYear = it },
+                            onYearSelected = { newYear ->
+                                birthYear = newYear
+                                val maxDay = BirthdayValidator.daysInMonth(newYear, birthMonth)
+                                if (birthDay > maxDay) birthDay = maxDay
+                            },
                             modifier = Modifier.weight(1.1f)
                         )
                     }
@@ -497,16 +594,20 @@ fun MemberProfileSetupScreen(
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
-                                    text = "Calculated Age: $calculatedAge Years Old",
+                                    text = if (isValidBirthDate && calculatedAge != null) {
+                                        "Calculated Age: $calculatedAge Years Old"
+                                    } else {
+                                        "Invalid Birth Date"
+                                    },
                                     color = if (isAdultEligible) Color(0xFF81C784) else Color(0xFFFF8A80),
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp
                                 )
                                 Text(
-                                    text = if (isAdultEligible) {
-                                        "Verified 18+ eligibility ($birthdayString)"
-                                    } else {
-                                        "Ineligible. Must be at least 18 years old to join."
+                                    text = when {
+                                        !isValidBirthDate -> "Select a valid calendar birth date."
+                                        isAdultEligible -> "Verified 18+ eligibility ($birthdayString)"
+                                        else -> "Ineligible. Must be at least 18 years old to join."
                                     },
                                     color = OffWhiteText,
                                     fontSize = 11.sp
@@ -748,28 +849,76 @@ fun MemberProfileSetupScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Submit Button
-            Button(
-                onClick = {
-                    if (isAdultEligible && displayName.isNotBlank()) {
-                        isSubmitting = true
-                        onSaveProfile(
-                            displayName,
-                            birthdayString,
-                            calculatedAge,
-                            gender,
-                            country,
-                            city,
-                            photoUrl,
-                            aboutMe,
-                            selectedPersonality,
-                            selectedInterests
+            val visibleError = localErrorMessage ?: externalErrorMessage
+            if (visibleError != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF380E14)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, Color(0xFFE53935), RoundedCornerShape(12.dp))
+                        .testTag("profile_setup_error_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = null,
+                            tint = Color(0xFFFF8A80),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = visibleError,
+                            color = OffWhiteText,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
                         )
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Submit Button (loading state driven strictly by ViewModel isSaving so failed saves always reset)
+            Button(
+                onClick = {
+                    val safeAge = calculatedAge
+                    when {
+                        displayName.isBlank() -> {
+                            localErrorMessage = "Please enter your display name."
+                        }
+                        country.isBlank() -> {
+                            localErrorMessage = "Please enter your country."
+                        }
+                        !isValidBirthDate || safeAge == null -> {
+                            localErrorMessage = "Please select a valid calendar birth date."
+                        }
+                        !isAdultEligible -> {
+                            localErrorMessage = "You must be at least 18 years old to join SOGO CHAT AND MEET."
+                        }
+                        else -> {
+                            localErrorMessage = null
+                            onDismissError()
+                            onSaveProfile(
+                                displayName,
+                                birthdayString,
+                                safeAge,
+                                gender,
+                                country,
+                                city,
+                                photoUrl,
+                                aboutMe,
+                                selectedPersonality,
+                                selectedInterests
+                            )
+                        }
+                    }
                 },
-                enabled = isAdultEligible && displayName.isNotBlank() && !isSubmitting,
+                enabled = isAdultEligible && displayName.isNotBlank() && !isSaving,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = PhilippineGold,
                     contentColor = Color.Black,
@@ -782,7 +931,7 @@ fun MemberProfileSetupScreen(
                     .height(54.dp)
                     .testTag("submit_profile_button")
             ) {
-                if (isSubmitting) {
+                if (isSaving) {
                     CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(24.dp))
                 } else {
                     Text(
@@ -853,6 +1002,7 @@ private fun MonthDropdown(
 @Composable
 private fun DayDropdown(
     selectedDay: Int,
+    maxDays: Int,
     onDaySelected: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -883,7 +1033,7 @@ private fun DayDropdown(
             onDismissRequest = { expanded = false },
             modifier = Modifier.background(MatteBlackSurface)
         ) {
-            (1..31).forEach { day ->
+            (1..maxDays).forEach { day ->
                 DropdownMenuItem(
                     text = { Text(day.toString(), color = OffWhiteText) },
                     onClick = {

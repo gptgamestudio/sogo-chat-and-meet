@@ -68,6 +68,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialCustomException
+import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
 import com.example.data.model.UserProfile
 import com.example.ui.theme.BurgundyDark
@@ -151,10 +152,42 @@ fun attemptAutoSignIn(
             } else {
                 onUnauthenticated()
             }
+        } catch (e: NoCredentialException) {
+            Log.d("Auth", "No auto sign-in credentials available")
+            onUnauthenticated()
         } catch (e: Exception) {
             onUnauthenticated()
         }
     }
+}
+
+suspend fun requestGoogleIdToken(
+    context: Context,
+    credentialManager: CredentialManager
+): String {
+    val activity = context.findActivity()
+        ?: throw IllegalStateException("Google verification failed: Activity context is unavailable.")
+    val clientId = try {
+        context.getString(R.string.default_web_client_id)
+    } catch (e: Exception) {
+        throw IllegalStateException("Google Sign-In configuration missing: default_web_client_id not found.")
+    }
+
+    val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+    val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
+    val result = credentialManager.getCredential(activity, request)
+    val credential = result.credential
+    if (credential is CustomCredential &&
+        (credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL ||
+         credential.type == TYPE_GOOGLE_ID_TOKEN_SIWG_CREDENTIAL)
+    ) {
+        val idToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+        if (idToken.isBlank()) {
+            throw IllegalStateException("Google verification returned an empty ID token.")
+        }
+        return idToken
+    }
+    throw IllegalStateException("Unexpected credential type received during verification.")
 }
 
 fun onGoogleSignInClicked(
@@ -195,8 +228,10 @@ fun onGoogleSignInClicked(
                     return@launch
                 }
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                val authResult = Firebase.auth.signInWithCredential(authCredential).await()
-                Log.d("Auth", "Firebase authentication succeeded for UID: ${authResult.user?.uid}")
+                firebaseAuthResult@ run {
+                    Firebase.auth.signInWithCredential(authCredential).await()
+                    Log.d("Auth", "Firebase authentication succeeded")
+                }
                 onAuthSuccess()
             } else {
                 val type = (credential as? CustomCredential)?.type ?: credential::class.java.simpleName
@@ -204,26 +239,18 @@ fun onGoogleSignInClicked(
                 onAuthError("Unexpected credential type received: $type")
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.w("Auth", "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
-            // When user selects an account in the Google account picker, but Google Play Services
-            // aborts (e.g. SHA-1 missing in Firebase Console or Google provider disabled),
-            // Play Services finishes with RESULT_CANCELED ("Activity is cancelled by the user").
-            // Surface this explicitly rather than silently returning to the login screen.
-            onAuthError(
-                "Sign-In was cancelled or rejected by Google Play Services.\n\n" +
-                "If you selected an account, verify the Firebase Console setup:\n" +
-                "1. Google provider is enabled (Authentication → Sign-in method)\n" +
-                "2. Debug SHA-1 fingerprint is registered under Your Apps:\n" +
-                "   39:52:0D:71:BF:E3:07:7D:29:89:5C:A7:07:8B:5A:4E:BC:C0:98:0F"
-            )
+            Log.w("Auth", "Google Sign-In flow cancelled by user")
+            onAuthError("Sign-In was cancelled. Please tap Sign In with Google to try again.")
             onAuthCancelled()
+        } catch (e: NoCredentialException) {
+            Log.w("Auth", "No Google credentials available on device")
+            onAuthError("No Google account is available on this device. Add a Google account in Settings and try again.")
         } catch (e: GetCredentialCustomException) {
-            Log.e("Auth", "Google Sign-In custom error: type=${e.type}, message=${e.message}", e)
-            onAuthError("Google Sign-In failed [${e.type}]: ${e.message ?: "Authentication service error. Verify SHA-1 in Firebase Console."}")
+            Log.e("Auth", "Google Sign-In custom error: type=${e.type}")
+            onAuthError("Google Sign-In could not be completed [${e.type}]. Please try again.")
         } catch (e: Exception) {
-            Log.e("Auth", "Google Sign-In failed", e)
-            val detail = e.localizedMessage ?: e.message ?: e.cause?.message ?: e::class.java.simpleName
-            onAuthError("Authentication error: $detail")
+            Log.e("Auth", "Google Sign-In failed (${e::class.java.simpleName})")
+            onAuthError("Google Sign-In failed. Please check your connection and try again.")
         }
     }
 }

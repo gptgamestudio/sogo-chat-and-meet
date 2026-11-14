@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <resources>
-    <string name="firestore_database_id" translatable="false">(default)</string>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-sogochat-d6957863-dbb1-4924-8f85-bce544f69089</string>
 </resources>

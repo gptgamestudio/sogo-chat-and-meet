@@ -35,6 +35,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ads.findActivity
 import com.example.data.model.UserProfile
 import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.signOut
@@ -115,28 +116,6 @@ fun PostLoginFlow(
     val dashboardViewModel: MainDashboardViewModel = viewModel(key = "dashboard_$currentUserId")
     val uiState by dashboardViewModel.uiState.collectAsState()
 
-    // Lifecycle-based Real-time Online Status (Requirement 4)
-    // Automatically updates presence on app foreground (ON_START) and background (ON_STOP)
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, currentUserId) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> {
-                    dashboardViewModel.setPresence(true)
-                }
-                Lifecycle.Event.ON_STOP -> {
-                    dashboardViewModel.setPresence(false)
-                }
-                else -> {}
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            dashboardViewModel.setPresence(false)
-        }
-    }
-
     when {
         // 1. Loading state while checking Firestore profile
         uiState.isLoading && uiState.currentUserProfile == null -> {
@@ -173,6 +152,9 @@ fun PostLoginFlow(
         uiState.currentUserProfile == null -> {
             MemberProfileSetupScreen(
                 initialProfile = null,
+                isSaving = uiState.isSavingProfile,
+                externalErrorMessage = uiState.errorMessage,
+                onDismissError = { dashboardViewModel.clearError() },
                 onSaveProfile = { name, bday, age, gen, country, city, photo, about, personality, interests ->
                     dashboardViewModel.createOrUpdateProfile(
                         displayName = name,
@@ -188,7 +170,6 @@ fun PostLoginFlow(
                     )
                 },
                 onSignOut = {
-                    dashboardViewModel.setPresence(false)
                     signOut(credentialManager, coroutineScope, onSignOut)
                 }
             )
@@ -200,7 +181,7 @@ fun PostLoginFlow(
                 currentUserId = currentUserId,
                 dashboardViewModel = dashboardViewModel,
                 onSignOut = {
-                    dashboardViewModel.setPresence(false)
+                    dashboardViewModel.setPresence(false, force = true)
                     signOut(credentialManager, coroutineScope, onSignOut)
                 }
             )
@@ -215,7 +196,37 @@ fun TwoDestinationNavigator(
     onSignOut: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
-    val chatViewModel: ChatViewModel = viewModel(key = "chat_$currentUserId")
+
+    // Lifecycle-based Real-time Online Status (active only once profile exists)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, currentUserId) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> {
+                    dashboardViewModel.setPresence(true)
+                }
+                Lifecycle.Event.ON_STOP -> {
+                    dashboardViewModel.setPresence(false)
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            dashboardViewModel.setPresence(false)
+        }
+    }
+
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val adMobManager = remember(context) {
+        (context.applicationContext as? SogoApplication)?.adMobManager
+    }
+    val adStatusMessage by (adMobManager?.adStatusMessage?.collectAsState()
+        ?: remember { mutableStateOf(null) })
+    val rewardCredits by (adMobManager?.rewardCredits?.collectAsState()
+        ?: remember { mutableStateOf(0) })
 
     // Navigation state between the exactly TWO main navigation destinations:
     // null -> SCREEN 1: Main Dashboard
@@ -230,16 +241,40 @@ fun TwoDestinationNavigator(
                 selectedPartner = member
             },
             coroutineScope = coroutineScope,
-            onSignOut = onSignOut
+            onSignOut = onSignOut,
+            adStatusMessage = adStatusMessage,
+            rewardCredits = rewardCredits,
+            onDismissAdStatus = { adMobManager?.clearStatusMessage() },
+            onWatchRewardedAd = {
+                adMobManager?.showRewardedAd(activity)
+            }
         )
     } else {
         // SCREEN 2 — PERSONAL PROFILE AND PRIVATE CHAT
-        ProfileAndChatScreen(
-            partner = selectedPartner!!,
-            viewModel = chatViewModel,
-            onBack = {
-                selectedPartner = null
+        val partner = selectedPartner!!
+        key(partner.userId) {
+            val chatViewModel: ChatViewModel = viewModel(
+                key = "chat_${currentUserId}_${partner.userId}"
+            )
+            DisposableEffect(partner.userId) {
+                onDispose {
+                    chatViewModel.clearActiveChat()
+                }
             }
-        )
+            ProfileAndChatScreen(
+                partner = partner,
+                viewModel = chatViewModel,
+                onBack = {
+                    chatViewModel.clearActiveChat()
+                    if (adMobManager != null) {
+                        adMobManager.showInterstitialIfEligible(activity) {
+                            selectedPartner = null
+                        }
+                    } else {
+                        selectedPartner = null
+                    }
+                }
+            )
+        }
     }
 }

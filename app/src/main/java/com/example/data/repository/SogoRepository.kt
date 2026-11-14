@@ -6,16 +6,17 @@ import com.example.data.model.BlockRecord
 import com.example.data.model.ChatMessage
 import com.example.data.model.Conversation
 import com.example.data.model.NotificationRecord
-import com.example.data.model.ReportRecord
-import com.example.data.model.UserPresence
 import com.example.data.model.UserProfile
 import com.example.data.util.OperationType
 import com.example.data.util.handleFirestoreError
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
@@ -25,28 +26,65 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+class RecentLoginRequiredException(
+    message: String = "Please reauthenticate with Google to confirm account deletion."
+) : Exception(message)
+
+interface SogoDataSource {
+    fun getCurrentUserId(): String?
+    fun requireUserId(): String
+    fun observeCurrentUserProfile(userId: String): Flow<UserProfile?>
+    fun observeMembers(): Flow<List<UserProfile>>
+    suspend fun saveUserProfile(profile: UserProfile)
+    suspend fun updatePresence(isOnline: Boolean, force: Boolean = false)
+    fun getConversationIdForUsers(otherUid: String): String
+    fun observeConversations(): Flow<List<Conversation>>
+    suspend fun ensureConversationExists(otherUid: String): String
+    fun observeMessages(conversationId: String): Flow<List<ChatMessage>>
+    suspend fun sendMessage(
+        conversationId: String,
+        receiverId: String,
+        content: String,
+        type: String = "TEXT",
+        mediaUrl: String? = null
+    )
+    suspend fun markMessageAsRead(conversationId: String, messageId: String)
+    suspend fun blockUser(blockedId: String)
+    fun observeBlockedUserIds(): Flow<Set<String>>
+    suspend fun reportUser(reportedId: String, reason: String, details: String?)
+    fun observeNotifications(): Flow<List<NotificationRecord>>
+    suspend fun markNotificationAsRead(notificationId: String)
+    suspend fun deleteUserAccount(googleIdToken: String? = null)
+}
 
 class SogoRepository(
     private val db: FirebaseFirestore,
     private val auth: FirebaseAuth = Firebase.auth
-) {
+) : SogoDataSource {
     constructor(context: Context) : this(
         getFirestoreInstance(context),
         Firebase.auth
     )
 
-    fun getCurrentUserId(): String? = auth.currentUser?.uid
+    private val presenceMutex = Mutex()
+    private val lastCommittedPresenceByUid = ConcurrentHashMap<String, Boolean>()
 
-    fun requireUserId(): String {
+    override fun getCurrentUserId(): String? = auth.currentUser?.uid
+
+    override fun requireUserId(): String {
         return auth.currentUser?.uid
             ?: throw IllegalStateException("User must be signed in with Google before accessing SOGO CHAT AND MEET.")
     }
 
     // --- User Profile Operations ---
 
-    fun observeCurrentUserProfile(userId: String): Flow<UserProfile?> = callbackFlow {
+    override fun observeCurrentUserProfile(userId: String): Flow<UserProfile?> = callbackFlow {
         val path = "users/$userId"
         val registration = db.collection("users").document(userId)
             .addSnapshotListener { snapshot, error ->
@@ -63,7 +101,7 @@ class SogoRepository(
         awaitClose { registration.remove() }
     }
 
-    fun observeMembers(): Flow<List<UserProfile>> = flow {
+    override fun observeMembers(): Flow<List<UserProfile>> = flow {
         val uid = requireUserId()
         val path = "users"
         val query = db.collection("users").orderBy("displayName", Query.Direction.ASCENDING)
@@ -80,7 +118,7 @@ class SogoRepository(
             .collect { emit(it) }
     }
 
-    suspend fun saveUserProfile(profile: UserProfile) {
+    override suspend fun saveUserProfile(profile: UserProfile) {
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid)
         val payload = mutableMapOf<String, Any?>(
@@ -100,7 +138,6 @@ class SogoRepository(
             "updatedAt" to FieldValue.serverTimestamp()
         )
 
-        // Check if doc exists to set createdAt if creating
         try {
             val existing = docRef.get().await()
             if (!existing.exists()) {
@@ -109,6 +146,7 @@ class SogoRepository(
                 payload["createdAt"] = existing.getTimestamp("createdAt") ?: FieldValue.serverTimestamp()
             }
             docRef.set(payload).await()
+            lastCommittedPresenceByUid[uid] = true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -117,42 +155,53 @@ class SogoRepository(
         }
     }
 
-    suspend fun updatePresence(isOnline: Boolean) {
+    override suspend fun updatePresence(isOnline: Boolean, force: Boolean) {
         val uid = auth.currentUser?.uid ?: return
-        val userDoc = db.collection("users").document(uid)
-        val presenceDoc = db.collection("user_presence").document(uid)
-        try {
-            userDoc.update(
-                mapOf(
-                    "isOnline" to isOnline,
-                    "lastActive" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+        presenceMutex.withLock {
+            if (!force && lastCommittedPresenceByUid[uid] == isOnline) {
+                return
+            }
+            val userDoc = db.collection("users").document(uid)
+            val presenceDoc = db.collection("user_presence").document(uid)
+            try {
+                val userSnapshot = userDoc.get().await()
+                if (!userSnapshot.exists()) {
+                    return
+                }
+                userDoc.update(
+                    mapOf(
+                        "isOnline" to isOnline,
+                        "lastActive" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
 
-            presenceDoc.set(
-                mapOf(
-                    "userId" to uid,
-                    "isOnline" to isOnline,
-                    "lastSeen" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-        } catch (e: Exception) {
-            // Silently log presence failure
-            handleFirestoreError(e, OperationType.UPDATE, presenceDoc.path)
+                presenceDoc.set(
+                    mapOf(
+                        "userId" to uid,
+                        "isOnline" to isOnline,
+                        "lastSeen" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+                lastCommittedPresenceByUid[uid] = isOnline
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.UPDATE, presenceDoc.path)
+            }
         }
     }
 
     // --- Conversation & Messaging Operations ---
 
-    fun getConversationIdForUsers(otherUid: String): String {
+    override fun getConversationIdForUsers(otherUid: String): String {
         val uid = requireUserId()
         val pair = listOf(uid, otherUid).sorted()
         return "conv_${pair[0]}_${pair[1]}"
     }
 
-    fun observeConversations(): Flow<List<Conversation>> = flow {
+    override fun observeConversations(): Flow<List<Conversation>> = flow {
         val uid = requireUserId()
         val path = "conversations"
         db.collection("conversations")
@@ -168,7 +217,7 @@ class SogoRepository(
             .collect { emit(it) }
     }
 
-    suspend fun ensureConversationExists(otherUid: String): String {
+    override suspend fun ensureConversationExists(otherUid: String): String {
         val uid = requireUserId()
         val convId = getConversationIdForUsers(otherUid)
         val docRef = db.collection("conversations").document(convId)
@@ -196,7 +245,7 @@ class SogoRepository(
         }
     }
 
-    fun observeMessages(conversationId: String): Flow<List<ChatMessage>> = flow {
+    override fun observeMessages(conversationId: String): Flow<List<ChatMessage>> = flow {
         val uid = requireUserId()
         val path = "conversations/$conversationId/messages"
         db.collection("conversations").document(conversationId).collection("messages")
@@ -213,12 +262,12 @@ class SogoRepository(
             .collect { emit(it) }
     }
 
-    suspend fun sendMessage(
+    override suspend fun sendMessage(
         conversationId: String,
         receiverId: String,
         content: String,
-        type: String = "TEXT",
-        mediaUrl: String? = null
+        type: String,
+        mediaUrl: String?
     ) {
         val uid = requireUserId()
         val messageId = "msg_${UUID.randomUUID()}"
@@ -251,7 +300,6 @@ class SogoRepository(
         }
 
         try {
-            // Write message and update conversation summary
             messageRef.set(messagePayload).await()
             convRef.update(
                 mapOf(
@@ -269,20 +317,31 @@ class SogoRepository(
         }
     }
 
-    suspend fun markMessageAsRead(conversationId: String, messageId: String) {
+    override suspend fun markMessageAsRead(conversationId: String, messageId: String) {
         val uid = requireUserId()
         val docRef = db.collection("conversations").document(conversationId)
             .collection("messages").document(messageId)
         try {
+            val snapshot = docRef.get().await()
+            val message = snapshot.toObject(ChatMessage::class.java) ?: return
+            if (message.receiverId != uid || message.isRead) {
+                return
+            }
             docRef.update("isRead", true).await()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            val root = generateSequence(e as Throwable) { it.cause }
+                .firstOrNull { it is FirebaseFirestoreException } as? FirebaseFirestoreException
+            if (root?.code != FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            }
         }
     }
 
     // --- Safety: Blocking & Reporting ---
 
-    suspend fun blockUser(blockedId: String) {
+    override suspend fun blockUser(blockedId: String) {
         val uid = requireUserId()
         val blockId = "block_${uid}_${blockedId}"
         val primaryDoc = db.collection("user_blocks").document(blockId)
@@ -304,7 +363,7 @@ class SogoRepository(
         }
     }
 
-    fun observeBlockedUserIds(): Flow<Set<String>> = callbackFlow {
+    override fun observeBlockedUserIds(): Flow<Set<String>> = callbackFlow {
         val uid = requireUserId()
         var myBlocks = emptySet<String>()
         var blockedBy = emptySet<String>()
@@ -345,7 +404,7 @@ class SogoRepository(
         }
     }
 
-    suspend fun reportUser(reportedId: String, reason: String, details: String?) {
+    override suspend fun reportUser(reportedId: String, reason: String, details: String?) {
         val uid = requireUserId()
         val reportId = "report_${UUID.randomUUID()}"
         val primaryDoc = db.collection("user_reports").document(reportId)
@@ -374,7 +433,7 @@ class SogoRepository(
 
     // --- Private Notifications ---
 
-    fun observeNotifications(): Flow<List<NotificationRecord>> = flow {
+    override fun observeNotifications(): Flow<List<NotificationRecord>> = flow {
         val uid = requireUserId()
         val path = "notifications"
         db.collection("notifications")
@@ -391,8 +450,8 @@ class SogoRepository(
             .collect { emit(it) }
     }
 
-    suspend fun markNotificationAsRead(notificationId: String) {
-        val uid = requireUserId()
+    override suspend fun markNotificationAsRead(notificationId: String) {
+        requireUserId()
         val docRef = db.collection("notifications").document(notificationId)
         try {
             docRef.update("isRead", true).await()
@@ -401,23 +460,83 @@ class SogoRepository(
         }
     }
 
-    suspend fun deleteUserAccount() {
-        val uid = requireUserId()
+    /**
+     * Deletes the signed-in user's owner-scoped records and Firebase Auth account.
+     *
+     * Safety sequence:
+     * 1. Validate active Auth session and reauthenticate first (or enforce recent sign-in window)
+     *    before mutating Firestore so failed/cancelled Auth verification preserves existing data.
+     * 2. Remove owner-deletable Firestore documents: user_presence/{uid}, owner notifications,
+     *    owner blocks, and users/{uid}. Note: Shared conversations (delete=false in rules) and
+     *    immutable safety reports require a server-side Cloud Function for cross-user cleanup.
+     * 3. Delete Firebase Auth account.
+     */
+    override suspend fun deleteUserAccount(googleIdToken: String?) {
+        val currentUser = auth.currentUser
+            ?: throw IllegalStateException("User must be signed in before deleting their account.")
+        val uid = currentUser.uid
+
+        // Step 1: Confirm Auth credential freshness BEFORE deleting any Firestore records
+        if (!googleIdToken.isNullOrBlank()) {
+            val credential = GoogleAuthProvider.getCredential(googleIdToken, null)
+            currentUser.reauthenticate(credential).await()
+            currentUser.reload().await()
+        } else {
+            currentUser.reload().await()
+            val lastSignInMs = currentUser.metadata?.lastSignInTimestamp ?: 0L
+            val sessionAgeMs = if (lastSignInMs > 0L) System.currentTimeMillis() - lastSignInMs else Long.MAX_VALUE
+            if (sessionAgeMs > RECENT_LOGIN_THRESHOLD_MS) {
+                throw RecentLoginRequiredException()
+            }
+        }
+
         val docRef = db.collection("users").document(uid)
         val presenceRef = db.collection("user_presence").document(uid)
+        var userBackupData: Map<String, Any>? = null
         try {
+            userBackupData = docRef.get().await().data
+
+            // Step 2: Delete owner-deletable Firestore documents while Auth token is still valid
             try { presenceRef.delete().await() } catch (_: Exception) {}
+
+            val ownNotifications = try {
+                db.collection("notifications").whereEqualTo("userId", uid).get().await()
+            } catch (_: Exception) { null }
+            ownNotifications?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (_: Exception) {}
+            }
+
+            val ownBlocks = try {
+                db.collection("user_blocks").whereEqualTo("blockerId", uid).get().await()
+            } catch (_: Exception) { null }
+            ownBlocks?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (_: Exception) {}
+            }
+
             docRef.delete().await()
-            auth.currentUser?.delete()?.await()
+            lastCommittedPresenceByUid.remove(uid)
+
+            // Step 3: Delete Firebase Authentication account
+            currentUser.delete().await()
         } catch (e: CancellationException) {
             throw e
+        } catch (e: FirebaseAuthRecentLoginRequiredException) {
+            if (userBackupData != null) {
+                try { docRef.set(userBackupData).await() } catch (_: Exception) {}
+            }
+            throw RecentLoginRequiredException("Recent sign-in verification required before deleting account.")
         } catch (e: Exception) {
+            if (userBackupData != null && auth.currentUser != null) {
+                try { docRef.set(userBackupData).await() } catch (_: Exception) {}
+            }
             handleFirestoreError(e, OperationType.DELETE, docRef.path)
             throw e
         }
     }
 
     companion object {
+        private const val RECENT_LOGIN_THRESHOLD_MS = 4 * 60 * 1000L
+
         fun getFirestoreInstance(context: Context): FirebaseFirestore {
             val dbId = context.applicationContext.getString(R.string.firestore_database_id)
             return if (dbId.isBlank() || dbId == "(default)") {

@@ -2,6 +2,7 @@ package com.example
 
 import android.app.Application
 import android.util.Log
+import com.example.ads.AdMobManager
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.AppCheckProviderFactory
 import com.google.firebase.appcheck.FirebaseAppCheck
@@ -9,35 +10,39 @@ import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderF
 
 class SogoApplication : Application() {
 
+    val adMobManager: AdMobManager by lazy { AdMobManager(this) }
+
     override fun onCreate() {
         super.onCreate()
 
-        // 1. Ensure FirebaseApp is initialized before installing App Check provider factory
-        FirebaseApp.initializeApp(this)
+        // 1. Initialize Google Mobile Ads SDK asynchronously on a background thread
+        adMobManager.initialize()
 
-        // 2. Install App Check provider factory before any Firebase service (Firestore, Auth, Storage) is accessed
-        val appCheck = FirebaseAppCheck.getInstance()
+        // 2. Ensure FirebaseApp is initialized before installing App Check provider factory
+        val app = FirebaseApp.initializeApp(this) ?: FirebaseApp.getApps(this).firstOrNull()
+        if (app == null) {
+            Log.e(TAG, "FirebaseApp failed to initialize; skipping App Check setup")
+            return
+        }
 
-        if (BuildConfig.DEBUG) {
-            // Debug provider factory for local development and emulator testing.
-            // Loaded via reflection so firebase-appcheck-debug is scoped strictly to debugImplementation
-            // and completely absent/excluded from release builds.
-            try {
+        // 3. Install App Check provider factory before any Firebase service (Firestore, Auth, Storage) is accessed
+        try {
+            val appCheck = FirebaseAppCheck.getInstance()
+            if (BuildConfig.DEBUG) {
+                // Debug provider factory is scoped strictly to debugImplementation
                 val debugClass = Class.forName("com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory")
                 val getInstanceMethod = debugClass.getMethod("getInstance")
                 val factory = getInstanceMethod.invoke(null) as AppCheckProviderFactory
                 appCheck.installAppCheckProviderFactory(factory)
                 Log.d(TAG, "Firebase App Check initialized with DebugAppCheckProviderFactory")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize DebugAppCheckProviderFactory in debug build", e)
-                throw IllegalStateException("Failed to initialize Firebase App Check with DebugAppCheckProviderFactory in debug build", e)
+            } else {
+                // Play Integrity provider factory for official production release builds
+                appCheck.installAppCheckProviderFactory(
+                    PlayIntegrityAppCheckProviderFactory.getInstance()
+                )
             }
-        } else {
-            // Play Integrity provider factory for official production release builds
-            appCheck.installAppCheckProviderFactory(
-                PlayIntegrityAppCheckProviderFactory.getInstance()
-            )
-            Log.d(TAG, "Firebase App Check initialized with PlayIntegrityAppCheckProviderFactory")
+        } catch (e: Throwable) {
+            Log.w(TAG, "Firebase App Check initialization skipped or failed (${e::class.java.simpleName})")
         }
     }
 

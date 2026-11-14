@@ -485,6 +485,33 @@ fun ProfileAndChatScreen(
                 )
             } else {
 
+            AnimatedVisibility(visible = uiState.errorMessage != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .testTag("chat_error_banner"),
+                    color = Color(0xFF42121B),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = uiState.errorMessage ?: "",
+                            color = TextWhite,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { viewModel.clearError() }) {
+                            Text("Dismiss", color = GoldLight, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
             // Real-Time Messages Feed
             LazyColumn(
                 modifier = Modifier
@@ -553,14 +580,14 @@ fun ProfileAndChatScreen(
                 onTextChanged = { viewModel.onInputTextChanged(it) },
                 onSend = { viewModel.sendTextMessage() },
                 onSendPhoto = {
-                    // Send attractive date photo simulation
-                    viewModel.sendPhotoMessage(
-                        imageUrl = "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=600&q=80",
-                        caption = "Having coffee in BGC! ☕"
+                    viewModel.reportFeatureNotImplemented(
+                        "Chat photo upload is not yet implemented in this version."
                     )
                 },
                 onSendVoice = {
-                    viewModel.sendVoiceMessage(durationText = "0:12")
+                    viewModel.reportFeatureNotImplemented(
+                        "Voice messages are not yet implemented in this version."
+                    )
                 }
             )
             }
@@ -1094,28 +1121,28 @@ fun ChatInputBar(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Photo Share Button
+            // Photo Share Button (Not yet implemented)
             IconButton(
                 onClick = onSendPhoto,
                 modifier = Modifier.size(40.dp).testTag("chat_photo_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.Image,
-                    contentDescription = "Share Photo",
-                    tint = GoldAccent,
+                    contentDescription = "Photo Sharing Not Implemented",
+                    tint = TextDim,
                     modifier = Modifier.size(22.dp)
                 )
             }
 
-            // Voice Message Button
+            // Voice Message Button (Not yet implemented)
             IconButton(
                 onClick = onSendVoice,
                 modifier = Modifier.size(40.dp).testTag("chat_voice_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.Mic,
-                    contentDescription = "Record Voice Message",
-                    tint = GoldAccent,
+                    contentDescription = "Voice Message Not Implemented",
+                    tint = TextDim,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -1219,8 +1246,8 @@ fun WebRtcCallDialog(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "WebRTC P2P Signaling...",
-                        color = OnlineGreen,
+                        text = "Not Implemented Yet",
+                        color = GoldLight,
                         fontSize = 13.sp
                     )
                 }
@@ -1266,7 +1293,7 @@ fun WebRtcCallDialog(
                         border = CardDefaults.outlinedCardBorder().copy(brush = Brush.horizontalGradient(listOf(OutlineSubtle, OutlineGold)))
                     ) {
                         Text(
-                            text = "WebRTC peer connection engine initialized. Waiting for remote peer handshake.",
+                            text = "Live audio/video calling is not implemented in this version. No network call or WebRTC session was started.",
                             color = TextMuted,
                             fontSize = 11.sp,
                             textAlign = TextAlign.Center,

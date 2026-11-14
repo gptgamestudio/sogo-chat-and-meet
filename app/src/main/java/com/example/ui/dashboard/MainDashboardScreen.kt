@@ -82,6 +82,7 @@ import com.example.data.model.UserProfile
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.ui.profile.MemberProfileSetupScreen
+import com.example.ui.auth.requestGoogleIdToken
 import com.example.ui.auth.signOut
 import com.example.ui.theme.AlertRed
 import com.example.ui.theme.BurgundyDark
@@ -100,6 +101,7 @@ import com.example.ui.theme.TextDim
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextWhite
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,7 +109,11 @@ fun MainDashboardScreen(
     viewModel: MainDashboardViewModel,
     onSelectMember: (UserProfile) -> Unit,
     coroutineScope: CoroutineScope,
-    onSignOut: () -> Unit
+    onSignOut: () -> Unit,
+    adStatusMessage: String? = null,
+    rewardCredits: Int = 0,
+    onDismissAdStatus: () -> Unit = {},
+    onWatchRewardedAd: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -119,11 +125,19 @@ fun MainDashboardScreen(
 
     if (showEditProfileDialog && uiState.currentUserProfile != null) {
         Dialog(
-            onDismissRequest = { showEditProfileDialog = false },
+            onDismissRequest = {
+                if (!uiState.isSavingProfile) {
+                    viewModel.clearError()
+                    showEditProfileDialog = false
+                }
+            },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             MemberProfileSetupScreen(
                 initialProfile = uiState.currentUserProfile,
+                isSaving = uiState.isSavingProfile,
+                externalErrorMessage = uiState.errorMessage,
+                onDismissError = { viewModel.clearError() },
                 onSaveProfile = { name, bday, age, gen, country, city, photo, about, personality, interests ->
                     viewModel.createOrUpdateProfile(
                         displayName = name,
@@ -151,29 +165,96 @@ fun MainDashboardScreen(
 
     if (showDeleteAccountDialog) {
         AlertDialog(
-            onDismissRequest = { showDeleteAccountDialog = false },
-            title = { Text("Delete Account", color = TextWhite) },
-            text = {
+            onDismissRequest = {
+                if (!uiState.isDeletingAccount) {
+                    showDeleteAccountDialog = false
+                    viewModel.clearError()
+                }
+            },
+            title = {
                 Text(
-                    "Are you sure you want to delete your SOGO CHAT profile? All your data will be permanently removed.",
-                    color = TextMuted
+                    if (uiState.requiresReauthForDeletion) "Confirm With Google" else "Delete Account",
+                    color = TextWhite
                 )
+            },
+            text = {
+                Column {
+                    Text(
+                        if (uiState.requiresReauthForDeletion) {
+                            "Your session needs fresh Google verification before deleting your account. Your profile and data have not been deleted yet."
+                        } else {
+                            "This permanently deletes your Firebase Auth login, profile, online presence, your blocks, and your notifications. Shared conversations and immutable safety reports remain governed by backend retention policies until automated server cleanup is deployed."
+                        },
+                        color = TextMuted,
+                        fontSize = 13.sp
+                    )
+                    if (uiState.errorMessage != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = uiState.errorMessage!!,
+                            color = AlertRed,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
             },
             confirmButton = {
                 Button(
+                    enabled = !uiState.isDeletingAccount,
                     onClick = {
-                        showDeleteAccountDialog = false
-                        viewModel.deleteAccount {
-                            signOut(credentialManager, coroutineScope, onSignOut)
+                        if (uiState.requiresReauthForDeletion) {
+                            coroutineScope.launch {
+                                try {
+                                    val googleIdToken = requestGoogleIdToken(context, credentialManager)
+                                    viewModel.deleteAccount(
+                                        googleIdToken = googleIdToken,
+                                        onCompleted = {
+                                            showDeleteAccountDialog = false
+                                            signOut(credentialManager, coroutineScope, onSignOut)
+                                        }
+                                    )
+                                } catch (e: Exception) {
+                                    viewModel.reportError(
+                                        e.message ?: "Google reauthentication failed. Your profile was preserved."
+                                    )
+                                }
+                            }
+                        } else {
+                            viewModel.deleteAccount(
+                                onReauthRequired = {
+                                    // Keep dialog open so user can tap "Verify & Delete"
+                                },
+                                onCompleted = {
+                                    showDeleteAccountDialog = false
+                                    signOut(credentialManager, coroutineScope, onSignOut)
+                                }
+                            )
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = AlertRed)
                 ) {
-                    Text("Delete Permanently", color = TextWhite)
+                    if (uiState.isDeletingAccount) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = TextWhite,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(
+                            if (uiState.requiresReauthForDeletion) "Verify & Delete" else "Delete Permanently",
+                            color = TextWhite
+                        )
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteAccountDialog = false }) {
+                TextButton(
+                    enabled = !uiState.isDeletingAccount,
+                    onClick = {
+                        showDeleteAccountDialog = false
+                        viewModel.clearError()
+                    }
+                ) {
                     Text("Cancel", color = TextMuted)
                 }
             },
@@ -261,6 +342,23 @@ fun MainDashboardScreen(
                             }
                         )
                         DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (rewardCredits > 0) {
+                                        "Support SOGO • Watch Ad ($rewardCredits ⭐)"
+                                    } else {
+                                        "Support SOGO • Watch Ad (+1 ⭐)"
+                                    },
+                                    color = GoldLight
+                                )
+                            },
+                            modifier = Modifier.testTag("watch_rewarded_ad_menu_item"),
+                            onClick = {
+                                showMenu = false
+                                onWatchRewardedAd()
+                            }
+                        )
+                        DropdownMenuItem(
                             text = { Text("Delete Account", color = AlertRed) },
                             onClick = {
                                 showMenu = false
@@ -299,6 +397,60 @@ fun MainDashboardScreen(
                 onAgeSelected = { viewModel.setAgeRange(it) },
                 onToggleOnline = { viewModel.toggleOnlineOnly() }
             )
+
+            AnimatedVisibility(visible = adStatusMessage != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .testTag("ad_status_banner"),
+                    color = BurgundyDark,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = adStatusMessage ?: "",
+                            color = GoldLight,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onDismissAdStatus) {
+                            Text("OK", color = TextWhite, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = uiState.errorMessage != null && !showEditProfileDialog && !showDeleteAccountDialog) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .testTag("dashboard_error_banner"),
+                    color = Color(0xFF42121B),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = uiState.errorMessage ?: "",
+                            color = TextWhite,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { viewModel.clearError() }) {
+                            Text("Dismiss", color = GoldLight, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
 
             // Loading / Empty / Members List
             if (uiState.isLoading && uiState.members.isEmpty()) {
@@ -432,7 +584,7 @@ fun DashboardSearchAndFilters(
             )
 
             // Gender Filter
-            listOf("ALL" to "All Genders", "Female" to "Women", "Male" to "Men").forEach { (key, label) ->
+            listOf("ALL" to "All Genders", "Female" to "Women", "Male" to "Men", "Non-Binary" to "Non-Binary").forEach { (key, label) ->
                 FilterChip(
                     selected = filter.genderFilter == key,
                     onClick = { onGenderSelected(key) },

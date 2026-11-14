@@ -1,7 +1,7 @@
 {
   "firestore": [
     {
-      "database": "(default)",
+      "database": "ai-studio-android-sogochat-d6957863-dbb1-4924-8f85-bce544f69089",
       "rules": "firestore.rules",
       "indexes": "firestore.indexes.json"
     }

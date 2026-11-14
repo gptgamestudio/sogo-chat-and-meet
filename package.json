@@ -6,7 +6,7 @@
   "scripts": {
     "test:firestore": "node --test firestore.test.js",
     "test:storage": "node --test storage.test.js",
-    "test:rules": "firebase emulators:exec --only auth,firestore,storage --project demo-no-project \"node --test firestore.test.js storage.test.js\""
+    "test:rules": "firebase emulators:exec --only auth,firestore,storage --project demo-no-project \"node --test firestore.test.js && node --test storage.test.js\""
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1"

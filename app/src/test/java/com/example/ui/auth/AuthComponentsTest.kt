@@ -18,6 +18,7 @@ import androidx.credentials.exceptions.CreateCredentialException
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialCustomException
 import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import androidx.test.core.app.ApplicationProvider
 import com.example.R
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -106,7 +107,7 @@ class AuthComponentsTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val clientId = context.getString(R.string.default_web_client_id)
         assertEquals(
-            "43721053011-3l2r8c2f159ok6lh59akqf0larr9haqm.apps.googleusercontent.com",
+            "492343241434-6vth7qrvhbotitfouho1ssoocvt72efb.apps.googleusercontent.com",
             clientId
         )
     }
@@ -135,7 +136,7 @@ class AuthComponentsTest {
     }
 
     @Test
-    fun onGoogleSignInClicked_whenCancelled_surfacesErrorAndInvokesCancelled() = runTest {
+    fun onGoogleSignInClicked_whenCancelled_surfacesCleanErrorWithoutSha1AndInvokesCancelled() = runTest {
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         val credentialManager = FakeFailingCredentialManager(
             GetCredentialCancellationException("Activity is cancelled by the user.")
@@ -157,11 +158,36 @@ class AuthComponentsTest {
         assertFalse(authSucceeded)
         assertTrue(cancelledCalled)
         assertNotNull(capturedError)
-        assertTrue(capturedError!!.contains("SHA-1"))
+        assertTrue(capturedError!!.contains("cancelled", ignoreCase = true))
+        assertFalse(capturedError!!.contains("SHA-1"))
+        assertFalse(capturedError!!.contains("39:52:0D"))
     }
 
     @Test
-    fun onGoogleSignInClicked_whenCustomException_surfacesTypeAndMessage() = runTest {
+    fun onGoogleSignInClicked_whenNoCredential_surfacesFriendlyMessage() = runTest {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        val credentialManager = FakeFailingCredentialManager(
+            NoCredentialException("No credentials available")
+        )
+        var capturedError: String? = null
+        var authSucceeded = false
+
+        onGoogleSignInClicked(
+            context = activity,
+            credentialManager = credentialManager,
+            onAuthSuccess = { authSucceeded = true },
+            onAuthError = { capturedError = it },
+            scope = this
+        )
+        advanceUntilIdle()
+
+        assertFalse(authSucceeded)
+        assertNotNull(capturedError)
+        assertTrue(capturedError!!.contains("No Google account is available"))
+    }
+
+    @Test
+    fun onGoogleSignInClicked_whenCustomException_surfacesTypeWithoutRawDetails() = runTest {
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         val credentialManager = FakeFailingCredentialManager(
             GetCredentialCustomException("TEST_TYPE", "Developer error 10")
@@ -181,6 +207,7 @@ class AuthComponentsTest {
         assertFalse(authSucceeded)
         assertNotNull(capturedError)
         assertTrue(capturedError!!.contains("TEST_TYPE"))
-        assertTrue(capturedError!!.contains("Developer error 10"))
+        assertTrue(capturedError!!.contains("could not be completed", ignoreCase = true))
+        assertFalse(capturedError!!.contains("Developer error 10"))
     }
 }
