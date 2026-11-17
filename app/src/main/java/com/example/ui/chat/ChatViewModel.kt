@@ -20,25 +20,12 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class CallType { NONE, AUDIO, VIDEO }
-enum class CallStatus { NOT_IMPLEMENTED, CONNECTING, IN_CALL, ENDED }
-
-data class CallState(
-    val callType: CallType = CallType.NONE,
-    val callStatus: CallStatus = CallStatus.NOT_IMPLEMENTED,
-    val isMuted: Boolean = false,
-    val isSpeakerOn: Boolean = false,
-    val isVideoEnabled: Boolean = true,
-    val durationSeconds: Int = 0
-)
-
 data class ChatUiState(
     val partnerProfile: UserProfile? = null,
     val conversationId: String? = null,
     val messages: List<ChatMessage> = emptyList(),
     val inputText: String = "",
     val isSending: Boolean = false,
-    val callState: CallState = CallState(),
     val isBlocked: Boolean = false,
     val reportSubmitted: Boolean = false,
     val errorMessage: String? = null
@@ -165,6 +152,21 @@ class ChatViewModel(
         }
     }
 
+    fun getCurrentUserId(): String? = repository.getCurrentUserId()
+
+    fun toggleMessageReaction(messageId: String, emoji: String) {
+        val convId = _uiState.value.conversationId ?: return
+        viewModelScope.launch {
+            try {
+                repository.toggleChatMessageReaction(convId, messageId, emoji)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = e.message ?: "Could not add emoji reaction.") }
+            }
+        }
+    }
+
     fun sendSticker(sticker: String) {
         val convId = _uiState.value.conversationId ?: return
         val partnerId = _uiState.value.partnerProfile?.userId ?: return
@@ -183,42 +185,6 @@ class ChatViewModel(
                 _uiState.update { it.copy(errorMessage = e.message ?: "Failed to send sticker.") }
             }
         }
-    }
-
-    // --- Audio / Video Calling Interface State (Signaling not yet implemented) ---
-
-    fun startCall(type: CallType) {
-        _uiState.update {
-            it.copy(
-                callState = CallState(
-                    callType = type,
-                    callStatus = CallStatus.NOT_IMPLEMENTED,
-                    isMuted = false,
-                    isSpeakerOn = type == CallType.VIDEO,
-                    isVideoEnabled = type == CallType.VIDEO,
-                    durationSeconds = 0
-                )
-            )
-        }
-    }
-
-    fun toggleMute() {
-        val curr = _uiState.value.callState
-        _uiState.update { it.copy(callState = curr.copy(isMuted = !curr.isMuted)) }
-    }
-
-    fun toggleSpeaker() {
-        val curr = _uiState.value.callState
-        _uiState.update { it.copy(callState = curr.copy(isSpeakerOn = !curr.isSpeakerOn)) }
-    }
-
-    fun toggleVideo() {
-        val curr = _uiState.value.callState
-        _uiState.update { it.copy(callState = curr.copy(isVideoEnabled = !curr.isVideoEnabled)) }
-    }
-
-    fun endCall() {
-        _uiState.update { it.copy(callState = CallState(callType = CallType.NONE)) }
     }
 
     // --- Safety: Block & Report ---

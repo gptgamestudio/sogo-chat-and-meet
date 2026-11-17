@@ -17,12 +17,14 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -30,15 +32,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.HowToReg
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -57,9 +66,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -78,6 +90,7 @@ import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.example.data.model.FriendStatus
 import com.example.data.model.UserProfile
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -108,6 +121,7 @@ import kotlinx.coroutines.launch
 fun MainDashboardScreen(
     viewModel: MainDashboardViewModel,
     onSelectMember: (UserProfile) -> Unit,
+    onVideoCallMember: (UserProfile) -> Unit = {},
     coroutineScope: CoroutineScope,
     onSignOut: () -> Unit,
     adStatusMessage: String? = null,
@@ -122,6 +136,7 @@ fun MainDashboardScreen(
     var showMenu by remember { mutableStateOf(false) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
+    var selectedDashboardTab by remember { mutableIntStateOf(0) }
 
     if (showEditProfileDialog && uiState.currentUserProfile != null) {
         Dialog(
@@ -321,6 +336,19 @@ fun MainDashboardScreen(
                         modifier = Modifier.background(MatteBlackSurface)
                     ) {
                         DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "MY DASHBOARD SETTINGS",
+                                    color = GoldAccent,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.8.sp
+                                )
+                            },
+                            enabled = false,
+                            onClick = {}
+                        )
+                        DropdownMenuItem(
                             text = { Text("Edit My Profile", color = TextWhite) },
                             onClick = {
                                 showMenu = false
@@ -341,6 +369,35 @@ fun MainDashboardScreen(
                                 viewModel.setPresence(!isOnline)
                             }
                         )
+                        DropdownMenuItem(
+                            text = {
+                                val shown = uiState.dashboardPreferences.showOnlineStrip
+                                Text(
+                                    text = if (shown) "Online Strip: Shown" else "Online Strip: Hidden",
+                                    color = TextWhite
+                                )
+                            },
+                            modifier = Modifier.testTag("toggle_online_strip_menu_item"),
+                            onClick = {
+                                showMenu = false
+                                viewModel.toggleShowOnlineStrip()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                val shown = uiState.dashboardPreferences.showDailyActivitiesPreview
+                                Text(
+                                    text = if (shown) "Activities Highlight: Shown" else "Activities Highlight: Hidden",
+                                    color = TextWhite
+                                )
+                            },
+                            modifier = Modifier.testTag("toggle_activities_preview_menu_item"),
+                            onClick = {
+                                showMenu = false
+                                viewModel.toggleShowDailyActivitiesPreview()
+                            }
+                        )
+                        HorizontalDivider(color = OutlineSubtle.copy(alpha = 0.5f))
                         DropdownMenuItem(
                             text = {
                                 Text(
@@ -373,6 +430,18 @@ fun MainDashboardScreen(
                                 signOut(credentialManager, coroutineScope, onSignOut)
                             }
                         )
+                        HorizontalDivider(color = OutlineSubtle.copy(alpha = 0.4f))
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "App updates & features are owner-managed.",
+                                    color = TextDim,
+                                    fontSize = 10.sp
+                                )
+                            },
+                            enabled = false,
+                            onClick = {}
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -388,15 +457,72 @@ fun MainDashboardScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Search & Filter Section
-            DashboardSearchAndFilters(
-                filter = uiState.filter,
-                onSearchChanged = { viewModel.updateSearchQuery(it) },
-                onGenderSelected = { viewModel.setGenderFilter(it) },
-                onCountrySelected = { viewModel.setCountryFilter(it) },
-                onAgeSelected = { viewModel.setAgeRange(it) },
-                onToggleOnline = { viewModel.toggleOnlineOnly() }
-            )
+            // Dashboard Section Switcher: Members vs Everyday Activities
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MatteBlackSurface)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (selectedDashboardTab == 0) BurgundyPrimary else MatteBlackSurfaceVariant,
+                    border = BorderStroke(1.dp, if (selectedDashboardTab == 0) GoldAccent else OutlineSubtle),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable { selectedDashboardTab = 0 }
+                        .testTag("dashboard_tab_members")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "👥 Members",
+                            color = if (selectedDashboardTab == 0) GoldLight else TextMuted,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (selectedDashboardTab == 1) BurgundyPrimary else MatteBlackSurfaceVariant,
+                    border = BorderStroke(1.dp, if (selectedDashboardTab == 1) GoldAccent else OutlineSubtle),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable { selectedDashboardTab = 1 }
+                        .testTag("dashboard_tab_activities")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "✨ Activities (${uiState.activityPosts.size})",
+                            color = if (selectedDashboardTab == 1) GoldLight else TextMuted,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            if (selectedDashboardTab == 0) {
+                // Search & Filter Section (Members Tab)
+                DashboardSearchAndFilters(
+                    filter = uiState.filter,
+                    friendsCount = uiState.friendsCount,
+                    onSearchChanged = { viewModel.updateSearchQuery(it) },
+                    onGenderSelected = { viewModel.setGenderFilter(it) },
+                    onCountrySelected = { viewModel.setCountryFilter(it) },
+                    onAgeSelected = { viewModel.setAgeRange(it) },
+                    onToggleOnline = { viewModel.toggleOnlineOnly() },
+                    onToggleFriends = { viewModel.toggleFriendsOnly() }
+                )
+            }
 
             AnimatedVisibility(visible = adStatusMessage != null) {
                 Surface(
@@ -452,56 +578,475 @@ fun MainDashboardScreen(
                 }
             }
 
-            // Loading / Empty / Members List
-            if (uiState.isLoading && uiState.members.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = GoldAccent)
+            // Content Area: Members Tab vs Everyday Activities Tab
+            if (selectedDashboardTab == 1) {
+                val myUserId = uiState.currentUserProfile?.userId
+                val membersById = remember(uiState.members) {
+                    uiState.members.associateBy { it.userId }
                 }
-            } else if (uiState.filteredMembers.isEmpty()) {
-                Box(
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .testTag("dashboard_activities_list"),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        top = 12.dp,
+                        end = 16.dp,
+                        bottom = 84.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.Favorite,
-                            contentDescription = null,
-                            tint = OutlineSubtle,
-                            modifier = Modifier.size(64.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "No Members Found",
-                            color = TextWhite,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Try adjusting your filters or search keywords.",
-                            color = TextMuted,
-                            fontSize = 13.sp
+                    item(key = "activity_composer") {
+                        ActivityComposerCard(
+                            currentUserProfile = uiState.currentUserProfile,
+                            isPosting = uiState.isPostingActivity,
+                            onPostActivity = { content, moodEmoji, activityTag, onCleared ->
+                                viewModel.createActivityPost(
+                                    content = content,
+                                    moodEmoji = moodEmoji,
+                                    activityTag = activityTag,
+                                    onSuccess = onCleared
+                                )
+                            }
                         )
                     }
+
+                    if (uiState.activityPosts.isEmpty()) {
+                        item(key = "empty_activities_state") {
+                            EverydayActivitiesEmptyCard()
+                        }
+                    } else {
+                        items(
+                            items = uiState.activityPosts,
+                            key = { "activity_${it.postId}" }
+                        ) { post ->
+                            ActivityPostCard(
+                                post = post,
+                                isOwnPost = myUserId != null && post.authorId == myUserId,
+                                myReaction = uiState.myActivityReactions[post.postId],
+                                authorProfile = membersById[post.authorId],
+                                onToggleReaction = { emoji ->
+                                    viewModel.toggleActivityReaction(post.postId, emoji)
+                                },
+                                onDeletePost = {
+                                    viewModel.deleteActivityPost(post.postId)
+                                },
+                                onChatAuthor = onSelectMember,
+                                onVideoCallAuthor = onVideoCallMember
+                            )
+                        }
+                    }
+                }
+            } else if (uiState.isLoading && uiState.members.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = GoldAccent)
                 }
             } else {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .windowInsetsPadding(WindowInsets.navigationBars),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .testTag("dashboard_members_list"),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        top = 12.dp,
+                        end = 16.dp,
+                        bottom = 84.dp
+                    ),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    items(
-                        items = uiState.filteredMembers,
-                        key = { it.userId }
-                    ) { member ->
-                        MemberProfileCard(
-                            member = member,
-                            onChatClicked = { onSelectMember(member) }
+                    // Incoming Friend Requests Strip
+                    if (uiState.incomingFriendRequests.isNotEmpty()) {
+                        item(key = "incoming_friend_requests_section") {
+                            IncomingFriendRequestsSection(
+                                requests = uiState.incomingFriendRequests,
+                                onAccept = { senderUid -> viewModel.acceptFriendRequest(senderUid) },
+                                onDecline = { senderUid -> viewModel.removeFriendOrCancel(senderUid) },
+                                onOpenProfile = onSelectMember
+                            )
+                        }
+                    }
+
+                    // Active Online Members Place (Quick-Pick Online Strip, user-toggleable)
+                    if (uiState.onlineMembers.isNotEmpty() && uiState.dashboardPreferences.showOnlineStrip) {
+                        item(key = "online_members_strip") {
+                            OnlineMembersQuickStrip(
+                                onlineMembers = uiState.onlineMembers,
+                                onSelectMember = onSelectMember,
+                                onVideoCallMember = onVideoCallMember
+                            )
+                        }
+                    }
+
+                    // Everyday Activities Highlight Card (user-toggleable)
+                    if (uiState.dashboardPreferences.showDailyActivitiesPreview) {
+                        item(key = "everyday_activities_preview") {
+                            EverydayActivitiesHighlightCard(
+                                posts = uiState.activityPosts,
+                                myReactions = uiState.myActivityReactions,
+                                onOpenActivitiesTab = { selectedDashboardTab = 1 },
+                                onReact = { postId, emoji ->
+                                    viewModel.toggleActivityReaction(postId, emoji)
+                                }
+                            )
+                        }
+                    }
+
+                    if (uiState.filteredMembers.isEmpty()) {
+                        item(key = "empty_members_state") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 48.dp, horizontal = 24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Default.Favorite,
+                                        contentDescription = null,
+                                        tint = OutlineSubtle,
+                                        modifier = Modifier.size(64.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = if (uiState.filter.friendsOnly) {
+                                            "No Friends Matched Yet"
+                                        } else {
+                                            "No Members Found"
+                                        },
+                                        color = TextWhite,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = if (uiState.filter.friendsOnly) {
+                                            "Tap Add Friend on any member card to build your SOGO friends list."
+                                        } else {
+                                            "Try adjusting your filters or search keywords."
+                                        },
+                                        color = TextMuted,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        items(
+                            items = uiState.filteredMembers,
+                            key = { it.userId }
+                        ) { member ->
+                            val friendStatus = uiState.friendStatusByUserId[member.userId] ?: FriendStatus.NONE
+                            MemberProfileCard(
+                                member = member,
+                                friendStatus = friendStatus,
+                                onFriendActionClicked = {
+                                    when (friendStatus) {
+                                        FriendStatus.NONE -> viewModel.sendFriendRequest(member.userId)
+                                        FriendStatus.REQUEST_RECEIVED -> viewModel.acceptFriendRequest(member.userId)
+                                        FriendStatus.REQUEST_SENT,
+                                        FriendStatus.FRIENDS -> viewModel.removeFriendOrCancel(member.userId)
+                                    }
+                                },
+                                onVideoCallClicked = { onVideoCallMember(member) },
+                                onChatClicked = { onSelectMember(member) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun OnlineMembersQuickStrip(
+    onlineMembers: List<UserProfile>,
+    onSelectMember: (UserProfile) -> Unit,
+    onVideoCallMember: (UserProfile) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("online_members_place")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(OnlineGreen)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "ONLINE MEMBERS (${onlineMembers.size})",
+                    color = GoldLight,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+            Text(
+                text = "Free Video Call & Chat",
+                color = OnlineGreen,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(
+                items = onlineMembers,
+                key = { "online_${it.userId}" }
+            ) { member ->
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MatteBlackSurface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, OnlineGreen.copy(alpha = 0.45f)),
+                    modifier = Modifier
+                        .width(122.dp)
+                        .clickable { onSelectMember(member) }
+                        .testTag("online_member_chip_${member.userId}")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(modifier = Modifier.size(54.dp)) {
+                            if (!member.photoUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(LocalContext.current)
+                                        .data(member.photoUrl)
+                                        .crossfade(true)
+                                        .build(),
+                                    contentDescription = member.displayName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(CircleShape)
+                                        .border(2.dp, OnlineGreen, CircleShape)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(CircleShape)
+                                        .background(BurgundyPrimary)
+                                        .border(2.dp, OnlineGreen, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = member.displayName.take(1).uppercase(),
+                                        color = GoldLight,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 20.sp
+                                    )
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(OnlineGreen)
+                                    .border(2.dp, MatteBlackSurface, CircleShape)
+                                    .align(Alignment.BottomEnd)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = member.displayName,
+                            color = TextWhite,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+
+                        Text(
+                            text = member.city ?: "Online",
+                            color = TextMuted,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = BurgundyPrimary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 36.dp)
+                                .clickable { onVideoCallMember(member) }
+                                .testTag("online_strip_call_${member.userId}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Videocam,
+                                    contentDescription = "Free Video Call ${member.displayName}",
+                                    tint = GoldLight,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Free Call",
+                                    color = GoldLight,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun IncomingFriendRequestsSection(
+    requests: List<IncomingFriendRequestItem>,
+    onAccept: (String) -> Unit,
+    onDecline: (String) -> Unit,
+    onOpenProfile: (UserProfile) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MatteBlackSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, OutlineGold.copy(alpha = 0.6f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("incoming_friend_requests_card")
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.PersonAdd,
+                    contentDescription = null,
+                    tint = GoldAccent,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "FRIEND REQUESTS (${requests.size})",
+                    color = GoldLight,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                requests.forEach { item ->
+                    val sender = item.senderProfile
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MatteBlackSurfaceVariant)
+                            .clickable { onOpenProfile(sender) }
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(BurgundyPrimary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (!sender.photoUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = sender.photoUrl,
+                                    contentDescription = sender.displayName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Text(
+                                    text = sender.displayName.take(1).uppercase(),
+                                    color = GoldLight,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${sender.displayName}, ${sender.age}",
+                                color = TextWhite,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${sender.city ?: "Manila"}, ${sender.country}",
+                                color = TextMuted,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { onDecline(sender.userId) },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("decline_friend_button_${sender.userId}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Decline friend request",
+                                tint = TextMuted
+                            )
+                        }
+
+                        Button(
+                            onClick = { onAccept(sender.userId) },
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("accept_friend_button_${sender.userId}"),
+                            shape = RoundedCornerShape(20.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = OnlineGreen,
+                                contentColor = MatteBlackBackground
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Accept",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -512,11 +1057,13 @@ fun MainDashboardScreen(
 @Composable
 fun DashboardSearchAndFilters(
     filter: DashboardFilter,
+    friendsCount: Int = 0,
     onSearchChanged: (String) -> Unit,
     onGenderSelected: (String) -> Unit,
     onCountrySelected: (String) -> Unit,
     onAgeSelected: (String) -> Unit,
-    onToggleOnline: () -> Unit
+    onToggleOnline: () -> Unit,
+    onToggleFriends: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -541,7 +1088,7 @@ fun DashboardSearchAndFilters(
             } else null,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
                 .testTag("member_search_input"),
             shape = RoundedCornerShape(24.dp),
             colors = OutlinedTextFieldDefaults.colors(
@@ -570,6 +1117,7 @@ fun DashboardSearchAndFilters(
                 selected = filter.onlineOnly,
                 onClick = onToggleOnline,
                 label = { Text("🟢 Online Now", fontSize = 12.sp) },
+                modifier = Modifier.testTag("online_only_chip"),
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = BurgundyPrimary,
                     selectedLabelColor = GoldLight,
@@ -580,6 +1128,25 @@ fun DashboardSearchAndFilters(
                     enabled = true,
                     selected = filter.onlineOnly,
                     borderColor = if (filter.onlineOnly) GoldAccent else OutlineSubtle
+                )
+            )
+
+            // Friends Only Toggle
+            FilterChip(
+                selected = filter.friendsOnly,
+                onClick = onToggleFriends,
+                label = { Text("👥 Friends ($friendsCount)", fontSize = 12.sp) },
+                modifier = Modifier.testTag("friends_only_chip"),
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = BurgundyPrimary,
+                    selectedLabelColor = GoldLight,
+                    containerColor = MatteBlackSurfaceVariant,
+                    labelColor = TextMuted
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = filter.friendsOnly,
+                    borderColor = if (filter.friendsOnly) GoldAccent else OutlineSubtle
                 )
             )
 
@@ -635,6 +1202,9 @@ fun DashboardSearchAndFilters(
 @Composable
 fun MemberProfileCard(
     member: UserProfile,
+    friendStatus: FriendStatus = FriendStatus.NONE,
+    onFriendActionClicked: () -> Unit = {},
+    onVideoCallClicked: () -> Unit = {},
     onChatClicked: () -> Unit
 ) {
     Card(
@@ -870,35 +1440,118 @@ fun MemberProfileCard(
                     Spacer(modifier = Modifier.height(14.dp))
                 }
 
-                // Chat & Meet Action CTA
-                Button(
-                    onClick = onChatClicked,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                        .testTag("chat_meet_button_${member.userId}"),
-                    shape = RoundedCornerShape(23.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BurgundyPrimary,
-                        contentColor = TextWhite
-                    ),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        brush = Brush.horizontalGradient(listOf(GoldAccent, GoldLight))
-                    )
+                // 3-Choice Member Action Bar: Add Friend | Free Video Call | Chat Now
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    val (friendLabel, friendIcon, friendBg) = when (friendStatus) {
+                        FriendStatus.NONE -> Triple("Add Friend", Icons.Default.PersonAdd, MatteBlackSurfaceVariant)
+                        FriendStatus.REQUEST_SENT -> Triple("Pending", Icons.Default.HourglassTop, MatteBlackSurfaceVariant)
+                        FriendStatus.REQUEST_RECEIVED -> Triple("Accept", Icons.Default.Check, OnlineGreen.copy(alpha = 0.22f))
+                        FriendStatus.FRIENDS -> Triple("Friends", Icons.Default.HowToReg, GoldAccent.copy(alpha = 0.2f))
+                    }
+                    val friendContentColor = when (friendStatus) {
+                        FriendStatus.REQUEST_RECEIVED -> OnlineGreen
+                        FriendStatus.FRIENDS -> GoldLight
+                        else -> TextWhite
+                    }
+
+                    OutlinedButton(
+                        onClick = onFriendActionClicked,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("add_friend_button_${member.userId}"),
+                        shape = RoundedCornerShape(22.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = friendBg,
+                            contentColor = friendContentColor
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (friendStatus == FriendStatus.REQUEST_RECEIVED) OnlineGreen else OutlineGold.copy(alpha = 0.6f)
+                        )
+                    ) {
+                        Icon(
+                            imageVector = friendIcon,
+                            contentDescription = friendLabel,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = friendLabel,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Free Video Call (Open to all members - $0)
+                    Button(
+                        onClick = onVideoCallClicked,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("video_call_card_button_${member.userId}"),
+                        shape = RoundedCornerShape(22.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = OnlineGreen.copy(alpha = 0.18f),
+                            contentColor = OnlineGreen
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, OnlineGreen.copy(alpha = 0.7f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Videocam,
+                            contentDescription = "Free Video Call",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Video Free",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Chat Now CTA
+                    Button(
+                        onClick = onChatClicked,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("chat_meet_button_${member.userId}"),
+                        shape = RoundedCornerShape(22.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BurgundyPrimary,
+                            contentColor = TextWhite
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            Brush.horizontalGradient(listOf(GoldAccent, GoldLight))
+                        )
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Chat,
-                            contentDescription = null,
+                            contentDescription = "Chat Now",
                             tint = GoldLight,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Chat & Meet",
+                            text = "Chat Now",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = TextWhite
+                            fontSize = 11.sp,
+                            color = TextWhite,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

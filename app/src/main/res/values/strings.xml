@@ -4,4 +4,5 @@
     <string name="admob_interstitial_primary_unit_id" translatable="false">ca-app-pub-9786472984542330/7764767269</string>
     <string name="admob_interstitial_secondary_unit_id" translatable="false">ca-app-pub-9786472984542330/2624296233</string>
     <string name="admob_rewarded_unit_id" translatable="false">ca-app-pub-9786472984542330/7930474134</string>
+    <string name="admob_banner_unit_id" translatable="false"></string>
 </resources>

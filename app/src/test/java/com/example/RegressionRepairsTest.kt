@@ -2,8 +2,14 @@ package com.example
 
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
+import com.example.call.CallPhase
+import com.example.call.CallViewModel
+import com.example.data.model.CallSession
 import com.example.data.model.ChatMessage
 import com.example.data.model.Conversation
+import com.example.data.model.FriendRequest
+import com.example.data.model.FriendStatus
+import com.example.data.model.IceCandidateRecord
 import com.example.data.model.NotificationRecord
 import com.example.data.model.UserProfile
 import com.example.data.repository.RecentLoginRequiredException
@@ -64,6 +70,10 @@ class RegressionRepairsTest {
         val membersFlow = MutableStateFlow<List<UserProfile>>(emptyList())
         val blockedIdsFlow = MutableStateFlow<Set<String>>(emptySet())
         val messagesByConversation = mutableMapOf<String, MutableStateFlow<List<ChatMessage>>>()
+        val friendRequestsFlow = MutableStateFlow<List<FriendRequest>>(emptyList())
+        val callSessionsFlow = MutableStateFlow<List<CallSession>>(emptyList())
+        val candidatesByCall = mutableMapOf<String, MutableStateFlow<List<IceCandidateRecord>>>()
+        val updatedCallStatuses = mutableListOf<Pair<String, String>>()
 
         var updatePresenceCallCount = 0
         val recordedPresenceWrites = mutableListOf<Boolean>()
@@ -152,6 +162,96 @@ class RegressionRepairsTest {
         override fun observeNotifications(): Flow<List<NotificationRecord>> = MutableStateFlow(emptyList())
 
         override suspend fun markNotificationAsRead(notificationId: String) = Unit
+
+        override fun getFriendRequestIdForUsers(otherUid: String): String {
+            val uid = requireUserId()
+            val sorted = listOf(uid, otherUid).sorted()
+            return "fr_${sorted[0]}_${sorted[1]}"
+        }
+
+        override fun observeFriendRequests(): Flow<List<FriendRequest>> = friendRequestsFlow
+
+        override suspend fun sendFriendRequest(targetUid: String) {
+            val uid = requireUserId()
+            val reqId = getFriendRequestIdForUsers(targetUid)
+            val existing = friendRequestsFlow.value.firstOrNull { it.requestId == reqId }
+            if (existing != null) {
+                if (existing.status == "PENDING" && existing.recipientId == uid) {
+                    acceptFriendRequest(reqId)
+                }
+                return
+            }
+            friendRequestsFlow.value = friendRequestsFlow.value + FriendRequest(
+                requestId = reqId,
+                requesterId = uid,
+                recipientId = targetUid,
+                participantUids = listOf(uid, targetUid).sorted(),
+                status = "PENDING"
+            )
+        }
+
+        override suspend fun acceptFriendRequest(requestId: String) {
+            friendRequestsFlow.value = friendRequestsFlow.value.map {
+                if (it.requestId == requestId) it.copy(status = "ACCEPTED") else it
+            }
+        }
+
+        override suspend fun removeFriendOrRequest(otherUid: String) {
+            val reqId = getFriendRequestIdForUsers(otherUid)
+            friendRequestsFlow.value = friendRequestsFlow.value.filterNot { it.requestId == reqId }
+        }
+
+        override fun observeCallSessions(): Flow<List<CallSession>> = callSessionsFlow
+
+        override suspend fun createCallSession(
+            callee: UserProfile,
+            callerName: String,
+            callerPhotoUrl: String?,
+            callType: String,
+            offerSdp: String
+        ): String {
+            val uid = requireUserId()
+            val callId = "call_fake_${callSessionsFlow.value.size + 1}"
+            val session = CallSession(
+                callId = callId,
+                callerId = uid,
+                callerName = callerName,
+                callerPhotoUrl = callerPhotoUrl,
+                calleeId = callee.userId,
+                calleeName = callee.displayName,
+                calleePhotoUrl = callee.photoUrl,
+                participantUids = listOf(uid, callee.userId).sorted(),
+                callType = callType,
+                status = "RINGING",
+                offerSdp = offerSdp
+            )
+            callSessionsFlow.value = callSessionsFlow.value + session
+            return callId
+        }
+
+        override suspend fun answerCallSession(callId: String, answerSdp: String) {
+            callSessionsFlow.value = callSessionsFlow.value.map {
+                if (it.callId == callId) it.copy(status = "ANSWERED", answerSdp = answerSdp) else it
+            }
+        }
+
+        override suspend fun updateCallStatus(callId: String, status: String) {
+            updatedCallStatuses += callId to status
+            callSessionsFlow.value = callSessionsFlow.value.map {
+                if (it.callId == callId) it.copy(status = status) else it
+            }
+        }
+
+        override suspend fun addIceCandidate(
+            callId: String,
+            participantUids: List<String>,
+            sdpMid: String,
+            sdpMLineIndex: Int,
+            candidate: String
+        ) = Unit
+
+        override fun observeIceCandidates(callId: String): Flow<List<IceCandidateRecord>> =
+            candidatesByCall.getOrPut(callId) { MutableStateFlow(emptyList()) }
 
         override suspend fun deleteUserAccount(googleIdToken: String?) {
             deleteAccountError?.let { throw it }
@@ -460,5 +560,86 @@ class RegressionRepairsTest {
         assertNotNull(vm.uiState.value.errorMessage)
 
         collectJob.cancel()
+    }
+
+    @Test
+    fun friendRequests_updateStatusIncomingListOnlineMembersAndFriendsFilter() = runTest {
+        val fake = FakeSogoDataSource(currentUid = "uid_me")
+        val alice = UserProfile(userId = "uid_alice", displayName = "Alice", age = 24, isOnline = true)
+        val bob = UserProfile(userId = "uid_bob", displayName = "Bob", age = 27, isOnline = false)
+        fake.membersFlow.value = listOf(alice, bob)
+
+        val vm = MainDashboardViewModel(app, fake)
+        val collectJob = backgroundScope.launch { vm.uiState.collect() }
+        advanceUntilIdle()
+
+        // Online strip contains only online non-blocked members
+        assertEquals(listOf("uid_alice"), vm.uiState.value.onlineMembers.map { it.userId })
+
+        // Alice sends incoming request to me
+        fake.friendRequestsFlow.value = listOf(
+            FriendRequest(
+                requestId = fake.getFriendRequestIdForUsers("uid_alice"),
+                requesterId = "uid_alice",
+                recipientId = "uid_me",
+                participantUids = listOf("uid_alice", "uid_me"),
+                status = "PENDING"
+            )
+        )
+        advanceUntilIdle()
+        assertEquals(1, vm.uiState.value.incomingFriendRequests.size)
+        assertEquals(FriendStatus.REQUEST_RECEIVED, vm.uiState.value.friendStatusByUserId["uid_alice"])
+
+        // Accepting moves status to FRIENDS and clears incoming list
+        vm.acceptFriendRequest("uid_alice")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.incomingFriendRequests.isEmpty())
+        assertEquals(1, vm.uiState.value.friendsCount)
+        assertEquals(FriendStatus.FRIENDS, vm.uiState.value.friendStatusByUserId["uid_alice"])
+
+        // I send friend request to Bob
+        vm.sendFriendRequest("uid_bob")
+        advanceUntilIdle()
+        assertEquals(FriendStatus.REQUEST_SENT, vm.uiState.value.friendStatusByUserId["uid_bob"])
+
+        // Friends-only filter shows only Alice
+        vm.toggleFriendsOnly()
+        advanceUntilIdle()
+        assertEquals(listOf("uid_alice"), vm.uiState.value.filteredMembers.map { it.userId })
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun incomingFreeVideoCall_ringsInCallViewModelAndDeclineResetsToIdle() = runTest {
+        val fake = FakeSogoDataSource(currentUid = "uid_me")
+        val callVm = CallViewModel(app, fake)
+
+        assertEquals(CallPhase.IDLE, callVm.uiState.value.phase)
+
+        fake.callSessionsFlow.value = listOf(
+            CallSession(
+                callId = "call_incoming_1",
+                callerId = "uid_alice",
+                callerName = "Alice",
+                calleeId = "uid_me",
+                calleeName = "Me",
+                participantUids = listOf("uid_alice", "uid_me"),
+                callType = "VIDEO",
+                status = "RINGING",
+                offerSdp = "v=0\r\n"
+            )
+        )
+        advanceUntilIdle()
+
+        assertEquals(CallPhase.RINGING_INCOMING, callVm.uiState.value.phase)
+        assertEquals("Alice", callVm.uiState.value.peerName)
+        assertEquals("VIDEO", callVm.uiState.value.callType)
+
+        callVm.declineIncomingCall()
+        advanceUntilIdle()
+
+        assertEquals(CallPhase.IDLE, callVm.uiState.value.phase)
+        assertTrue(fake.updatedCallStatuses.contains("call_incoming_1" to "DECLINED"))
     }
 }

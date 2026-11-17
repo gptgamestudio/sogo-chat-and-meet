@@ -715,3 +715,310 @@ test("Notifications: cannot spoof for another user, pre-mark isRead, or alter bo
   }));
 });
 
+// 7. Friend Requests & Free Video Call Signaling Rules
+test("FriendRequests: requester can send, recipient can accept, requester cannot self-accept, blocked/third-party fail", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const now = new Date();
+  const reqId = `fr_${ALICE_UID}_${BOB_UID}`;
+
+  // Cannot pre-seed ACCEPTED status on creation
+  await assertFails(aliceDb.collection("friend_requests").doc(reqId).set({
+    requestId: reqId,
+    requesterId: ALICE_UID,
+    recipientId: BOB_UID,
+    participantUids: [ALICE_UID, BOB_UID],
+    status: "ACCEPTED",
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  // Valid PENDING request succeeds
+  await assertSucceeds(aliceDb.collection("friend_requests").doc(reqId).set({
+    requestId: reqId,
+    requesterId: ALICE_UID,
+    recipientId: BOB_UID,
+    participantUids: [ALICE_UID, BOB_UID],
+    status: "PENDING",
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  // Requester Alice cannot approve her own sent request
+  await assertFails(aliceDb.collection("friend_requests").doc(reqId).update({
+    status: "ACCEPTED",
+    updatedAt: new Date(),
+  }));
+
+  // Third-party Charlie cannot read or accept
+  await assertFails(charlieDb.collection("friend_requests").doc(reqId).get());
+  await assertFails(charlieDb.collection("friend_requests").doc(reqId).update({
+    status: "ACCEPTED",
+    updatedAt: new Date(),
+  }));
+
+  // Recipient Bob can accept
+  await assertSucceeds(bobDb.collection("friend_requests").doc(reqId).update({
+    status: "ACCEPTED",
+    updatedAt: new Date(),
+  }));
+
+  // Either participant can unfriend/delete
+  await assertSucceeds(aliceDb.collection("friend_requests").doc(reqId).delete());
+});
+
+test("CallSessions & Candidates: participants can signal free video calls, blocked & terminal state bypasses fail", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const now = new Date();
+  const callId = "call_alice_bob_1";
+
+  // Alice starts a free live video call with Bob
+  await assertSucceeds(aliceDb.collection("call_sessions").doc(callId).set({
+    callId,
+    callerId: ALICE_UID,
+    callerName: "Alice",
+    calleeId: BOB_UID,
+    calleeName: "Bob",
+    participantUids: [ALICE_UID, BOB_UID],
+    callType: "VIDEO",
+    status: "RINGING",
+    offerSdp: "v=0\r\no=- 123 2 IN IP4 127.0.0.1\r\n",
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  // Third party Charlie cannot read or join the call
+  await assertFails(charlieDb.collection("call_sessions").doc(callId).get());
+  await assertFails(charlieDb.collection("call_sessions").doc(callId).collection("candidates").doc("c_charlie").set({
+    candidateId: "c_charlie",
+    senderId: CHARLIE_UID,
+    participantUids: [ALICE_UID, BOB_UID],
+    sdpMid: "0",
+    sdpMLineIndex: 0,
+    candidate: "candidate:fake",
+    createdAt: new Date(),
+  }));
+
+  // Alice exchanges an ICE candidate
+  await assertSucceeds(aliceDb.collection("call_sessions").doc(callId).collection("candidates").doc("cand_1").set({
+    candidateId: "cand_1",
+    senderId: ALICE_UID,
+    participantUids: [ALICE_UID, BOB_UID],
+    sdpMid: "0",
+    sdpMLineIndex: 0,
+    candidate: "candidate:1 1 UDP 2122252543 192.168.1.2 50000 typ host",
+    createdAt: new Date(),
+  }));
+
+  // Bob answers with answerSdp
+  await assertSucceeds(bobDb.collection("call_sessions").doc(callId).update({
+    status: "ANSWERED",
+    answerSdp: "v=0\r\no=- 456 2 IN IP4 127.0.0.1\r\n",
+    updatedAt: new Date(),
+  }));
+
+  // Ending the call sets ENDED (terminal lock)
+  await assertSucceeds(aliceDb.collection("call_sessions").doc(callId).update({
+    status: "ENDED",
+    updatedAt: new Date(),
+  }));
+
+  // Cannot reopen an ENDED call session
+  await assertFails(bobDb.collection("call_sessions").doc(callId).update({
+    status: "ANSWERED",
+    answerSdp: "tampered",
+    updatedAt: new Date(),
+  }));
+
+  // Blocked users cannot ring one another
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const blockId = `block_${BOB_UID}_${ALICE_UID}`;
+    await context.firestore().collection("user_blocks").doc(blockId).set({
+      blockId,
+      blockerId: BOB_UID,
+      blockedId: ALICE_UID,
+      createdAt: now,
+    });
+  });
+
+  await assertFails(aliceDb.collection("call_sessions").doc("call_blocked").set({
+    callId: "call_blocked",
+    callerId: ALICE_UID,
+    callerName: "Alice",
+    calleeId: BOB_UID,
+    calleeName: "Bob",
+    participantUids: [ALICE_UID, BOB_UID],
+    callType: "VIDEO",
+    status: "RINGING",
+    offerSdp: "v=0\r\n",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }));
+});
+
+// 8. Everyday Activities & Emoji Reactions Tests
+test("Activity Posts: signed-in users can post and react with emojis; unauth/spoofing/tampering blocked", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const now = new Date();
+  const postId = "post_daily_1";
+
+  // Unauthenticated cannot read or post
+  await assertFails(unauthDb.collection("activity_posts").get());
+  await assertFails(unauthDb.collection("activity_posts").doc(postId).set({
+    postId,
+    authorId: ALICE_UID,
+    authorName: "Alice",
+    content: "Unauth post",
+    moodEmoji: "☕",
+    activityTag: "Coffee Time",
+    reactionCounts: {},
+    totalReactions: 0,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  // Cannot spoof authorId or inflate initial reactions
+  await assertFails(bobDb.collection("activity_posts").doc("post_spoof").set({
+    postId: "post_spoof",
+    authorId: ALICE_UID,
+    authorName: "Alice",
+    content: "Fake post",
+    moodEmoji: "☕",
+    activityTag: "Coffee Time",
+    reactionCounts: {},
+    totalReactions: 0,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  await assertFails(aliceDb.collection("activity_posts").doc("post_fake_count").set({
+    postId: "post_fake_count",
+    authorId: ALICE_UID,
+    authorName: "Alice",
+    content: "Inflated likes",
+    moodEmoji: "🔥",
+    activityTag: "Fitness",
+    reactionCounts: { "❤️": 999 },
+    totalReactions: 999,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  // Alice creates a valid everyday activity post
+  await assertSucceeds(aliceDb.collection("activity_posts").doc(postId).set({
+    postId,
+    authorId: ALICE_UID,
+    authorName: "Alice Santos",
+    authorCity: "Manila",
+    content: "Morning coffee by the bay! Sino gising pa?",
+    moodEmoji: "☕",
+    activityTag: "Morning Vibe",
+    reactionCounts: {},
+    totalReactions: 0,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  // Bob reads feed and reacts with ❤️ in his own activity_reactions subcollection + post counters
+  await assertSucceeds(bobDb.collection("activity_posts").orderBy("createdAt", "desc").limit(50).get());
+  await assertSucceeds(bobDb.collection("users").doc(BOB_UID).collection("activity_reactions").doc(postId).set({
+    userId: BOB_UID,
+    postId,
+    emoji: "❤️",
+    updatedAt: new Date(),
+  }));
+  await assertSucceeds(bobDb.collection("activity_posts").doc(postId).update({
+    reactionCounts: { "❤️": 1 },
+    totalReactions: 1,
+    updatedAt: new Date(),
+  }));
+
+  // Bob cannot write into Alice's personal activity_reactions subcollection
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("activity_reactions").doc(postId).set({
+    userId: ALICE_UID,
+    postId,
+    emoji: "👍",
+    updatedAt: new Date(),
+  }));
+
+  // Bob cannot edit Alice's activity post content or delete Alice's post
+  await assertFails(bobDb.collection("activity_posts").doc(postId).update({
+    content: "Hacked post text",
+    updatedAt: new Date(),
+  }));
+  await assertFails(bobDb.collection("activity_posts").doc(postId).delete());
+
+  // Alice can delete her own post
+  await assertSucceeds(aliceDb.collection("activity_posts").doc(postId).delete());
+});
+
+// 9. Chat Message Emoji Reactions Tests
+test("Chat Messages: participants can react with emojis without altering other participant's reaction or content", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const convId = `conv_${ALICE_UID}_${BOB_UID}`;
+  const msgId = "msg_emoji_1";
+  const now = new Date();
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await db.collection("conversations").doc(convId).set({
+      conversationId: convId,
+      participantUids: [ALICE_UID, BOB_UID],
+      lastMessage: "Kumusta!",
+      lastMessageSenderId: ALICE_UID,
+      lastMessageTimestamp: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.collection("conversations").doc(convId).collection("messages").doc(msgId).set({
+      messageId: msgId,
+      conversationId: convId,
+      senderId: ALICE_UID,
+      receiverId: BOB_UID,
+      participantUids: [ALICE_UID, BOB_UID],
+      content: "Kumusta partner! 😊",
+      type: "TEXT",
+      isRead: false,
+      createdAt: now,
+    });
+  });
+
+  // Bob reacts with ❤️
+  await assertSucceeds(bobDb.collection("conversations").doc(convId).collection("messages").doc(msgId).update({
+    reactions: { [BOB_UID]: "❤️" },
+  }));
+
+  // Alice adds her own 🔥 reaction while preserving Bob's ❤️
+  await assertSucceeds(aliceDb.collection("conversations").doc(convId).collection("messages").doc(msgId).update({
+    reactions: { [BOB_UID]: "❤️", [ALICE_UID]: "🔥" },
+  }));
+
+  // Alice CANNOT overwrite or remove Bob's reaction
+  await assertFails(aliceDb.collection("conversations").doc(convId).collection("messages").doc(msgId).update({
+    reactions: { [BOB_UID]: "😢", [ALICE_UID]: "🔥" },
+  }));
+  await assertFails(aliceDb.collection("conversations").doc(convId).collection("messages").doc(msgId).update({
+    reactions: { [ALICE_UID]: "🔥" },
+  }));
+
+  // Alice cannot alter message text when adding a reaction
+  await assertFails(aliceDb.collection("conversations").doc(convId).collection("messages").doc(msgId).update({
+    content: "Edited text",
+    reactions: { [BOB_UID]: "❤️", [ALICE_UID]: "👍" },
+  }));
+
+  // Non-participant Charlie cannot react
+  await assertFails(charlieDb.collection("conversations").doc(convId).collection("messages").doc(msgId).update({
+    reactions: { [CHARLIE_UID]: "😂" },
+  }));
+});
+
+
+

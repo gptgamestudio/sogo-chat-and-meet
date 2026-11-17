@@ -2,6 +2,7 @@ package com.example.ui.chat
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +19,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -35,27 +38,29 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AddReaction
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DoneAll
-import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.EmojiEmotions
+import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.HowToReg
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Report
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -91,18 +96,20 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.model.ChatMessage
+import com.example.data.model.FriendStatus
 import com.example.data.model.UserProfile
+import com.example.ui.common.AllEmojisPickerDialog
+import com.example.ui.common.SogoEmojiCatalog
 import com.example.ui.theme.AlertRed
 import com.example.ui.theme.BurgundyDark
 import com.example.ui.theme.BurgundyLight
@@ -127,6 +134,10 @@ import java.util.Locale
 fun ProfileAndChatScreen(
     partner: UserProfile,
     viewModel: ChatViewModel,
+    friendStatus: FriendStatus = FriendStatus.NONE,
+    onFriendActionClick: () -> Unit = {},
+    onStartAudioCall: () -> Unit = {},
+    onStartVideoCall: () -> Unit = {},
     onBack: () -> Unit
 ) {
     // Hardware and gesture Back Handler returning to Main Dashboard
@@ -136,6 +147,7 @@ fun ProfileAndChatScreen(
     val listState = rememberLazyListState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    var showEmojiDrawer by remember { mutableStateOf(false) }
     var showOverflowMenu by remember { mutableStateOf(false) }
     var showBlockConfirmDialog by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
@@ -151,18 +163,6 @@ fun ProfileAndChatScreen(
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.size - 1)
         }
-    }
-
-    // WebRTC Audio/Video Call Interface Modal
-    if (uiState.callState.callType != CallType.NONE) {
-        WebRtcCallDialog(
-            partner = partner,
-            callState = uiState.callState,
-            onToggleMute = { viewModel.toggleMute() },
-            onToggleSpeaker = { viewModel.toggleSpeaker() },
-            onToggleVideo = { viewModel.toggleVideo() },
-            onEndCall = { viewModel.endCall() }
-        )
     }
 
     // Block Confirmation Dialog
@@ -352,27 +352,27 @@ fun ProfileAndChatScreen(
                     }
                 },
                 actions = {
-                    // Audio Call button
+                    // Free Audio Call button
                     IconButton(
-                        onClick = { viewModel.startCall(CallType.AUDIO) },
+                        onClick = onStartAudioCall,
                         modifier = Modifier.testTag("audio_call_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Call,
-                            contentDescription = "Audio Call",
+                            contentDescription = "Free Voice Call",
                             tint = GoldLight
                         )
                     }
 
-                    // Video Call button
+                    // Free Video Call button
                     IconButton(
-                        onClick = { viewModel.startCall(CallType.VIDEO) },
+                        onClick = onStartVideoCall,
                         modifier = Modifier.testTag("video_call_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Videocam,
-                            contentDescription = "Video Call",
-                            tint = GoldLight
+                            contentDescription = "Free Video Call",
+                            tint = OnlineGreen
                         )
                     }
 
@@ -479,6 +479,9 @@ fun ProfileAndChatScreen(
             if (selectedTab == 0) {
                 MemberProfileDetailsView(
                     partner = partner,
+                    friendStatus = friendStatus,
+                    onFriendActionClick = onFriendActionClick,
+                    onStartVideoCall = onStartVideoCall,
                     onStartChat = { selectedTab = 1 },
                     onBlock = { showBlockConfirmDialog = true },
                     onReport = { showReportDialog = true }
@@ -561,35 +564,49 @@ fun ProfileAndChatScreen(
                     }
                 }
 
+                val currentUid = viewModel.getCurrentUserId()
                 items(items = uiState.messages, key = { it.messageId }) { msg ->
                     ChatMessageBubble(
                         message = msg,
-                        isFromMe = msg.senderId != partner.userId
+                        isFromMe = msg.senderId != partner.userId,
+                        currentUserId = currentUid,
+                        onToggleReaction = { emoji ->
+                            viewModel.toggleMessageReaction(msg.messageId, emoji)
+                        }
                     )
                 }
             }
 
-            // Quick Dating Stickers Bar
+            // Quick Dating Stickers & Emojis Bar
             QuickStickersBar(
                 onStickerSelected = { sticker -> viewModel.sendSticker(sticker) }
             )
 
-            // Chat Input Bar
+            // Chat Input Bar with Emoji Picker Toggle
             ChatInputBar(
                 inputText = uiState.inputText,
+                isEmojiDrawerOpen = showEmojiDrawer,
+                onToggleEmojiDrawer = { showEmojiDrawer = !showEmojiDrawer },
                 onTextChanged = { viewModel.onInputTextChanged(it) },
-                onSend = { viewModel.sendTextMessage() },
-                onSendPhoto = {
-                    viewModel.reportFeatureNotImplemented(
-                        "Chat photo upload is not yet implemented in this version."
-                    )
-                },
-                onSendVoice = {
-                    viewModel.reportFeatureNotImplemented(
-                        "Voice messages are not yet implemented in this version."
-                    )
+                onSend = {
+                    showEmojiDrawer = false
+                    viewModel.sendTextMessage()
                 }
             )
+
+            AnimatedVisibility(visible = showEmojiDrawer) {
+                ChatEmojiPickerDrawer(
+                    onEmojiSelected = { emoji ->
+                        viewModel.onInputTextChanged(uiState.inputText + emoji)
+                    }
+                )
+            }
+
+            val imeOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            if (!imeOpen) {
+                // Keep Chat Input Bar & Emoji Drawer clear above MovableBottomAdBanner
+                Spacer(modifier = Modifier.height(78.dp))
+            }
             }
         }
     }
@@ -599,6 +616,9 @@ fun ProfileAndChatScreen(
 @Composable
 fun MemberProfileDetailsView(
     partner: UserProfile,
+    friendStatus: FriendStatus = FriendStatus.NONE,
+    onFriendActionClick: () -> Unit = {},
+    onStartVideoCall: () -> Unit = {},
     onStartChat: () -> Unit,
     onBlock: () -> Unit,
     onReport: () -> Unit
@@ -771,6 +791,59 @@ fun MemberProfileDetailsView(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Quick Actions Row: Add Friend & Free Video Call
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            val (friendLabel, friendIcon) = when (friendStatus) {
+                FriendStatus.NONE -> "Add Friend" to Icons.Default.PersonAdd
+                FriendStatus.REQUEST_SENT -> "Request Sent" to Icons.Default.HourglassTop
+                FriendStatus.REQUEST_RECEIVED -> "Accept Friend" to Icons.Default.Check
+                FriendStatus.FRIENDS -> "Friends" to Icons.Default.HowToReg
+            }
+            OutlinedButton(
+                onClick = onFriendActionClick,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(50.dp)
+                    .testTag("profile_add_friend_button"),
+                shape = RoundedCornerShape(25.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = MatteBlackSurface,
+                    contentColor = if (friendStatus == FriendStatus.REQUEST_RECEIVED) OnlineGreen else GoldLight
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (friendStatus == FriendStatus.REQUEST_RECEIVED) OnlineGreen else OutlineGold
+                )
+            ) {
+                Icon(imageVector = friendIcon, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = friendLabel, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Button(
+                onClick = onStartVideoCall,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(50.dp)
+                    .testTag("profile_video_call_button"),
+                shape = RoundedCornerShape(25.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = OnlineGreen.copy(alpha = 0.2f),
+                    contentColor = OnlineGreen
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, OnlineGreen)
+            ) {
+                Icon(imageVector = Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = "Free Video Call", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
         // Start Private Conversation Button (Requirement 5)
         Button(
             onClick = onStartChat,
@@ -796,7 +869,7 @@ fun MemberProfileDetailsView(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "Start Private Conversation",
+                    text = "Chat Now",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = TextWhite
@@ -931,14 +1004,17 @@ fun MemberProfileDetailsView(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(84.dp))
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChatMessageBubble(
     message: ChatMessage,
-    isFromMe: Boolean
+    isFromMe: Boolean,
+    currentUserId: String? = null,
+    onToggleReaction: (String) -> Unit = {}
 ) {
     val bubbleColor = if (isFromMe) BurgundyPrimary else MatteBlackCard
     val shape = if (isFromMe) {
@@ -949,113 +1025,257 @@ fun ChatMessageBubble(
 
     val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
     val formattedTime = message.createdAt?.toDate()?.let { timeFormat.format(it) } ?: "Just now"
+    var showReactionBar by remember { mutableStateOf(false) }
+    var showAllReactionsDialog by remember { mutableStateOf(false) }
+
+    val myReaction = if (!currentUserId.isNullOrBlank()) message.reactions[currentUserId] else null
+
+    if (showAllReactionsDialog) {
+        AllEmojisPickerDialog(
+            title = "React to Message",
+            selectedEmoji = myReaction,
+            onDismiss = { showAllReactionsDialog = false },
+            onEmojiSelected = { emoji ->
+                showReactionBar = false
+                onToggleReaction(emoji)
+            }
+        )
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (isFromMe) Alignment.End else Alignment.Start
     ) {
-        Surface(
-            shape = shape,
-            color = bubbleColor,
-            border = if (isFromMe) CardDefaults.outlinedCardBorder().copy(brush = Brush.horizontalGradient(listOf(BurgundyLight, GoldAccent))) else CardDefaults.outlinedCardBorder(),
-            modifier = Modifier.widthIn(max = 280.dp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (isFromMe) Arrangement.End else Arrangement.Start
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                when (message.type) {
-                    "IMAGE" -> {
-                        if (!message.mediaUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = message.mediaUrl,
-                                contentDescription = "Shared image",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(180.dp)
-                                    .clip(RoundedCornerShape(12.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                        }
-                        if (message.content.isNotBlank()) {
-                            Text(text = message.content, color = TextWhite, fontSize = 14.sp)
-                        }
-                    }
-                    "VOICE" -> {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = CircleShape,
-                                color = if (isFromMe) GoldAccent else BurgundyPrimary,
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = "Play voice note",
-                                    tint = MatteBlackBackground,
-                                    modifier = Modifier.padding(6.dp)
+            if (isFromMe) {
+                IconButton(
+                    onClick = { showReactionBar = !showReactionBar },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .testTag("react_message_button_${message.messageId}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AddReaction,
+                        contentDescription = "React with emoji",
+                        tint = if (myReaction != null) GoldAccent else TextDim,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            Surface(
+                shape = shape,
+                color = bubbleColor,
+                border = if (isFromMe) CardDefaults.outlinedCardBorder().copy(brush = Brush.horizontalGradient(listOf(BurgundyLight, GoldAccent))) else CardDefaults.outlinedCardBorder(),
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .clickable { showReactionBar = !showReactionBar }
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    when (message.type) {
+                        "IMAGE" -> {
+                            if (!message.mediaUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = message.mediaUrl,
+                                    contentDescription = "Shared image",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(180.dp)
+                                        .clip(RoundedCornerShape(12.dp)),
+                                    contentScale = ContentScale.Crop
                                 )
+                                Spacer(modifier = Modifier.height(6.dp))
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                // Waveform bars visual
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                            if (message.content.isNotBlank()) {
+                                Text(text = message.content, color = TextWhite, fontSize = 14.sp)
+                            }
+                        }
+                        "VOICE" -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isFromMe) GoldAccent else BurgundyPrimary,
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    listOf(14, 22, 10, 28, 18, 24, 12, 20, 16).forEach { h ->
-                                        Box(
-                                            modifier = Modifier
-                                                .width(3.dp)
-                                                .height(h.dp)
-                                                .clip(RoundedCornerShape(2.dp))
-                                                .background(if (isFromMe) GoldLight else BurgundyLight)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play voice note",
+                                        tint = MatteBlackBackground,
+                                        modifier = Modifier.padding(6.dp)
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(3.dp))
-                                Text(
-                                    text = message.content,
-                                    color = if (isFromMe) GoldLight else TextMuted,
-                                    fontSize = 11.sp
-                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    // Waveform bars visual
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        listOf(14, 22, 10, 28, 18, 24, 12, 20, 16).forEach { h ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(3.dp)
+                                                    .height(h.dp)
+                                                    .clip(RoundedCornerShape(2.dp))
+                                                    .background(if (isFromMe) GoldLight else BurgundyLight)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = message.content,
+                                        color = if (isFromMe) GoldLight else TextMuted,
+                                        fontSize = 11.sp
+                                    )
+                                }
                             }
                         }
+                        "STICKER" -> {
+                            Text(
+                                text = message.content,
+                                fontSize = 24.sp,
+                                modifier = Modifier.padding(4.dp)
+                            )
+                        }
+                        else -> {
+                            Text(
+                                text = message.content,
+                                color = TextWhite,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp
+                            )
+                        }
                     }
-                    "STICKER" -> {
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Timestamp & Read Receipt Checkmarks
+                    Row(
+                        modifier = Modifier.align(Alignment.End),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = message.content,
-                            fontSize = 24.sp,
-                            modifier = Modifier.padding(4.dp)
+                            text = formattedTime,
+                            color = if (isFromMe) GoldLight.copy(alpha = 0.8f) else TextDim,
+                            fontSize = 10.sp
                         )
-                    }
-                    else -> {
-                        Text(
-                            text = message.content,
-                            color = TextWhite,
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp
-                        )
+                        if (isFromMe) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = if (message.isRead) Icons.Default.DoneAll else Icons.Default.Check,
+                                contentDescription = if (message.isRead) "Read" else "Sent",
+                                tint = if (message.isRead) GoldLight else TextDim,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
                     }
                 }
+            }
 
-                Spacer(modifier = Modifier.height(4.dp))
+            if (!isFromMe) {
+                IconButton(
+                    onClick = { showReactionBar = !showReactionBar },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .testTag("react_message_button_${message.messageId}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AddReaction,
+                        contentDescription = "React with emoji",
+                        tint = if (myReaction != null) GoldAccent else TextDim,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
 
-                // Timestamp & Read Receipt Checkmarks
+        // Displayed Message Reactions Row
+        if (message.reactions.isNotEmpty()) {
+            val grouped = message.reactions.values.groupingBy { it }.eachCount()
+            Row(
+                modifier = Modifier.padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                grouped.forEach { (emoji, count) ->
+                    val isMine = myReaction == emoji
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isMine) BurgundyPrimary else MatteBlackSurfaceVariant,
+                        border = BorderStroke(1.dp, if (isMine) GoldAccent else OutlineSubtle),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onToggleReaction(emoji) }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = emoji, fontSize = 13.sp)
+                            if (count > 1) {
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "$count",
+                                    color = GoldLight,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Expandable Quick Reaction Selector Bar
+        AnimatedVisibility(visible = showReactionBar) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MatteBlackSurface,
+                border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.55f)),
+                modifier = Modifier.padding(top = 4.dp)
+            ) {
                 Row(
-                    modifier = Modifier.align(Alignment.End),
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = formattedTime,
-                        color = if (isFromMe) GoldLight.copy(alpha = 0.8f) else TextDim,
-                        fontSize = 10.sp
-                    )
-                    if (isFromMe) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = if (message.isRead) Icons.Default.DoneAll else Icons.Default.Check,
-                            contentDescription = if (message.isRead) "Read" else "Sent",
-                            tint = if (message.isRead) GoldLight else TextDim,
-                            modifier = Modifier.size(12.dp)
-                        )
+                    listOf("👍", "❤️", "😂", "😍", "🔥", "😢").forEach { emoji ->
+                        val isMine = myReaction == emoji
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isMine) BurgundyPrimary else MatteBlackSurfaceVariant,
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    showReactionBar = false
+                                    onToggleReaction(emoji)
+                                }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(text = emoji, fontSize = 18.sp)
+                            }
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MatteBlackSurfaceVariant,
+                        modifier = Modifier
+                            .heightIn(min = 38.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { showAllReactionsDialog = true }
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = "+ All", color = GoldLight, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -1074,7 +1294,13 @@ fun QuickStickersBar(
         "Ganda mo ✨",
         "Kain tayo! 🍲",
         "Good night 🌙",
-        "You make me smile 😊"
+        "You make me smile 😊",
+        "👍",
+        "❤️",
+        "😂",
+        "😍",
+        "🔥",
+        "🎉"
     )
 
     Row(
@@ -1087,7 +1313,9 @@ fun QuickStickersBar(
     ) {
         datingStickers.forEach { sticker ->
             Surface(
-                modifier = Modifier.clickable { onStickerSelected(sticker) },
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { onStickerSelected(sticker) },
                 shape = RoundedCornerShape(16.dp),
                 color = MatteBlackSurfaceVariant,
                 border = CardDefaults.outlinedCardBorder().copy(brush = Brush.horizontalGradient(listOf(OutlineSubtle, OutlineGold)))
@@ -1106,10 +1334,10 @@ fun QuickStickersBar(
 @Composable
 fun ChatInputBar(
     inputText: String,
+    isEmojiDrawerOpen: Boolean = false,
+    onToggleEmojiDrawer: () -> Unit = {},
     onTextChanged: (String) -> Unit,
-    onSend: () -> Unit,
-    onSendPhoto: () -> Unit,
-    onSendVoice: () -> Unit
+    onSend: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1118,32 +1346,19 @@ fun ChatInputBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Photo Share Button (Not yet implemented)
             IconButton(
-                onClick = onSendPhoto,
-                modifier = Modifier.size(40.dp).testTag("chat_photo_button")
+                onClick = onToggleEmojiDrawer,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("chat_emoji_picker_button")
             ) {
                 Icon(
-                    imageVector = Icons.Default.Image,
-                    contentDescription = "Photo Sharing Not Implemented",
-                    tint = TextDim,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-
-            // Voice Message Button (Not yet implemented)
-            IconButton(
-                onClick = onSendVoice,
-                modifier = Modifier.size(40.dp).testTag("chat_voice_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Mic,
-                    contentDescription = "Voice Message Not Implemented",
-                    tint = TextDim,
-                    modifier = Modifier.size(22.dp)
+                    imageVector = Icons.Default.EmojiEmotions,
+                    contentDescription = if (isEmojiDrawerOpen) "Hide emojis" else "Open emoji picker",
+                    tint = if (isEmojiDrawerOpen) GoldLight else GoldAccent
                 )
             }
 
@@ -1154,7 +1369,7 @@ fun ChatInputBar(
                 placeholder = { Text("Type a private message...", color = TextDim, fontSize = 13.sp) },
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
                     .testTag("chat_message_input"),
                 shape = RoundedCornerShape(24.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -1173,7 +1388,7 @@ fun ChatInputBar(
             // Send Button
             Surface(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .clickable(enabled = inputText.isNotBlank(), onClick = onSend)
                     .testTag("chat_send_button"),
@@ -1193,184 +1408,86 @@ fun ChatInputBar(
     }
 }
 
-// WebRTC Audio & Video Call Interface Dialog
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun WebRtcCallDialog(
-    partner: UserProfile,
-    callState: CallState,
-    onToggleMute: () -> Unit,
-    onToggleSpeaker: () -> Unit,
-    onToggleVideo: () -> Unit,
-    onEndCall: () -> Unit
+fun ChatEmojiPickerDrawer(
+    onEmojiSelected: (String) -> Unit
 ) {
-    Dialog(
-        onDismissRequest = onEndCall,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    var selectedCategory by remember { mutableIntStateOf(0) }
+    val categories = SogoEmojiCatalog.categories
+    val activeCategory = categories.getOrElse(selectedCategory) { categories.first() }
+
+    Surface(
+        color = MatteBlackSurface,
+        border = BorderStroke(1.dp, OutlineSubtle),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("chat_emoji_drawer")
     ) {
-        Box(
+        Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            BurgundyDark,
-                            Color(0xFF2B0811),
-                            MatteBlackBackground,
-                            MatteBlackBackground
-                        )
-                    )
-                )
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                categories.forEachIndexed { index, category ->
+                    val isCurrent = index == selectedCategory
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isCurrent) BurgundyPrimary else MatteBlackSurfaceVariant,
+                        border = BorderStroke(1.dp, if (isCurrent) GoldAccent else OutlineSubtle),
+                        modifier = Modifier
+                            .heightIn(min = 40.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { selectedCategory = index }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = category.icon, fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = category.title,
+                                color = if (isCurrent) GoldLight else TextMuted,
+                                fontSize = 11.sp,
+                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+                    .fillMaxWidth()
+                    .height(172.dp)
+                    .verticalScroll(rememberScrollState())
             ) {
-                // Call Header
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = if (callState.callType == CallType.VIDEO) "SOGO VIDEO CALL" else "SOGO AUDIO CALL",
-                        color = GoldAccent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = partner.displayName,
-                        color = TextWhite,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Not Implemented Yet",
-                        color = GoldLight,
-                        fontSize = 13.sp
-                    )
-                }
-
-                // Partner Avatar in Call
-                Box(contentAlignment = Alignment.Center) {
-                    Box(
-                        modifier = Modifier
-                            .size(160.dp)
-                            .clip(CircleShape)
-                            .border(3.dp, OutlineGold, CircleShape)
-                    ) {
-                        if (!partner.photoUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = partner.photoUrl,
-                                contentDescription = partner.displayName,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(BurgundyPrimary),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    partner.displayName.take(1).uppercase(),
-                                    color = GoldLight,
-                                    fontSize = 64.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    activeCategory.emojis.forEach { emoji ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MatteBlackSurfaceVariant,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onEmojiSelected(emoji) }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(text = emoji, fontSize = 22.sp)
                             }
-                        }
-                    }
-                }
-
-                // Call Engine Disclosure & Status
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MatteBlackCard),
-                        shape = RoundedCornerShape(14.dp),
-                        border = CardDefaults.outlinedCardBorder().copy(brush = Brush.horizontalGradient(listOf(OutlineSubtle, OutlineGold)))
-                    ) {
-                        Text(
-                            text = "Live audio/video calling is not implemented in this version. No network call or WebRTC session was started.",
-                            color = TextMuted,
-                            fontSize = 11.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(28.dp))
-
-                    // Call Controls Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Mute button
-                        IconButton(
-                            onClick = onToggleMute,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(if (callState.isMuted) AlertRed else MatteBlackSurfaceVariant)
-                        ) {
-                            Icon(
-                                imageVector = if (callState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
-                                contentDescription = "Mute",
-                                tint = TextWhite
-                            )
-                        }
-
-                        // Speaker button
-                        IconButton(
-                            onClick = onToggleSpeaker,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(if (callState.isSpeakerOn) GoldAccent else MatteBlackSurfaceVariant)
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                contentDescription = "Speaker",
-                                tint = if (callState.isSpeakerOn) MatteBlackBackground else TextWhite
-                            )
-                        }
-
-                        // Video toggle button
-                        if (callState.callType == CallType.VIDEO) {
-                            IconButton(
-                                onClick = onToggleVideo,
-                                modifier = Modifier
-                                    .size(56.dp)
-                                    .clip(CircleShape)
-                                    .background(if (!callState.isVideoEnabled) AlertRed else MatteBlackSurfaceVariant)
-                            ) {
-                                Icon(
-                                    imageVector = if (callState.isVideoEnabled) Icons.Default.Videocam else Icons.Default.VideocamOff,
-                                    contentDescription = "Toggle Video",
-                                    tint = TextWhite
-                                )
-                            }
-                        }
-
-                        // End Call button
-                        IconButton(
-                            onClick = onEndCall,
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(AlertRed)
-                                .testTag("end_call_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CallEnd,
-                                contentDescription = "End Call",
-                                tint = TextWhite,
-                                modifier = Modifier.size(30.dp)
-                            )
                         }
                     }
                 }

@@ -65,6 +65,7 @@
         "type": { "type": "string", "enum": ["TEXT", "IMAGE", "VOICE", "STICKER"], "description": "Message media type" },
         "mediaUrl": { "type": "string", "description": "Optional image/audio attachment URL" },
         "isRead": { "type": "boolean", "description": "Read receipt status" },
+        "reactions": { "type": "object", "description": "Map of participant UID to reaction emoji (max 2 entries)" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Sent timestamp" }
       },
       "required": ["messageId", "conversationId", "senderId", "receiverId", "participantUids", "content", "type", "createdAt"]
@@ -111,12 +112,100 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "Created timestamp" }
       },
       "required": ["notificationId", "userId", "title", "body", "type", "isRead", "createdAt"]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Bidirectional friend connection or pending request between two members",
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string", "description": "Deterministic friend pair identifier (fr_<uid1>_<uid2>)" },
+        "requesterId": { "type": "string", "description": "UID of user who sent the friend request" },
+        "recipientId": { "type": "string", "description": "UID of user receiving the friend request" },
+        "participantUids": { "type": "array", "description": "Sorted 2-element array of requesterId and recipientId" },
+        "status": { "type": "string", "enum": ["PENDING", "ACCEPTED"], "description": "Friendship status" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of request creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last status update" }
+      },
+      "required": ["requestId", "requesterId", "recipientId", "participantUids", "status", "createdAt", "updatedAt"]
+    },
+    "CallSession": {
+      "title": "CallSession",
+      "description": "Free WebRTC signaling session for peer-to-peer audio and video calls between two members",
+      "type": "object",
+      "properties": {
+        "callId": { "type": "string", "description": "Unique call session identifier" },
+        "callerId": { "type": "string", "description": "UID of initiating caller" },
+        "callerName": { "type": "string", "description": "Display name of caller" },
+        "callerPhotoUrl": { "type": "string", "description": "Optional avatar URL of caller" },
+        "calleeId": { "type": "string", "description": "UID of receiving member" },
+        "calleeName": { "type": "string", "description": "Display name of callee" },
+        "calleePhotoUrl": { "type": "string", "description": "Optional avatar URL of callee" },
+        "participantUids": { "type": "array", "description": "Sorted 2-element array of callerId and calleeId" },
+        "callType": { "type": "string", "enum": ["VIDEO", "AUDIO"], "description": "Call media type" },
+        "status": { "type": "string", "enum": ["RINGING", "ANSWERED", "DECLINED", "ENDED"], "description": "Call signaling state" },
+        "offerSdp": { "type": "string", "description": "Caller WebRTC SDP offer" },
+        "answerSdp": { "type": "string", "description": "Callee WebRTC SDP answer" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of call initiation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last call update" }
+      },
+      "required": ["callId", "callerId", "callerName", "calleeId", "calleeName", "participantUids", "callType", "status", "offerSdp", "createdAt", "updatedAt"]
+    },
+    "IceCandidate": {
+      "title": "IceCandidate",
+      "description": "WebRTC ICE candidate exchanged between call participants",
+      "type": "object",
+      "properties": {
+        "candidateId": { "type": "string", "description": "Unique candidate document ID" },
+        "senderId": { "type": "string", "description": "UID of peer that generated the ICE candidate" },
+        "participantUids": { "type": "array", "description": "Denormalized participant UIDs from parent call session" },
+        "sdpMid": { "type": "string", "description": "SDP media stream identification tag" },
+        "sdpMLineIndex": { "type": "integer", "description": "Zero-based index of media description" },
+        "candidate": { "type": "string", "description": "ICE candidate SDP string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of candidate creation" }
+      },
+      "required": ["candidateId", "senderId", "participantUids", "sdpMid", "sdpMLineIndex", "candidate", "createdAt"]
+    },
+    "ActivityPost": {
+      "title": "ActivityPost",
+      "description": "Daily community activity post shared on the Main Dashboard with aggregated emoji reaction counts",
+      "type": "object",
+      "properties": {
+        "postId": { "type": "string", "description": "Unique activity post ID" },
+        "authorId": { "type": "string", "description": "UID of member who posted the activity" },
+        "authorName": { "type": "string", "description": "Display name of author" },
+        "authorPhotoUrl": { "type": "string", "description": "Optional avatar URL of author" },
+        "authorCity": { "type": "string", "description": "Optional city of author" },
+        "content": { "type": "string", "description": "Daily activity status text" },
+        "moodEmoji": { "type": "string", "description": "Selected activity mood emoji" },
+        "activityTag": { "type": "string", "description": "Everyday activity category label" },
+        "reactionCounts": { "type": "object", "description": "Bounded map of emoji string to integer count" },
+        "totalReactions": { "type": "integer", "description": "Total number of reactions across all emojis" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of post creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["postId", "authorId", "authorName", "content", "moodEmoji", "activityTag", "reactionCounts", "totalReactions", "createdAt", "updatedAt"]
+    },
+    "ActivityReaction": {
+      "title": "ActivityReaction",
+      "description": "Owner-scoped personal emoji reaction record for an ActivityPost",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of reacting user" },
+        "postId": { "type": "string", "description": "Target ActivityPost ID" },
+        "emoji": { "type": "string", "description": "Emoji reacted with" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of reaction" }
+      },
+      "required": ["userId", "postId", "emoji", "updatedAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "User profiles visible to authenticated members for dating discovery, modifiable only by owner"
+    },
+    "/users/{userId}/activity_reactions/{postId}": {
+      "schema": { "$ref": "#/entities/ActivityReaction" },
+      "description": "Personal emoji reactions cast by the owner user on community activity posts"
     },
     "/user_presence/{userId}": {
       "schema": { "$ref": "#/entities/UserPresence" },
@@ -149,6 +238,22 @@
     "/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/UserNotification" },
       "description": "Private member notifications, readable and manageable only by the recipient user"
+    },
+    "/friend_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/FriendRequest" },
+      "description": "Member friend requests and accepted friendships, visible and manageable only by the two participants"
+    },
+    "/call_sessions/{callId}": {
+      "schema": { "$ref": "#/entities/CallSession" },
+      "description": "Free P2P WebRTC audio and video call signaling sessions accessible only by caller and callee"
+    },
+    "/call_sessions/{callId}/candidates/{candidateId}": {
+      "schema": { "$ref": "#/entities/IceCandidate" },
+      "description": "WebRTC ICE candidates exchanged between call participants"
+    },
+    "/activity_posts/{postId}": {
+      "schema": { "$ref": "#/entities/ActivityPost" },
+      "description": "Everyday community activity posts on the Main Dashboard readable and reactable by signed-in members"
     }
   }
 }

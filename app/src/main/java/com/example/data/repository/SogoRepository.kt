@@ -2,9 +2,13 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.R
+import com.example.data.model.ActivityPost
 import com.example.data.model.BlockRecord
+import com.example.data.model.CallSession
 import com.example.data.model.ChatMessage
 import com.example.data.model.Conversation
+import com.example.data.model.FriendRequest
+import com.example.data.model.IceCandidateRecord
 import com.example.data.model.NotificationRecord
 import com.example.data.model.UserProfile
 import com.example.data.util.OperationType
@@ -60,6 +64,47 @@ interface SogoDataSource {
     suspend fun reportUser(reportedId: String, reason: String, details: String?)
     fun observeNotifications(): Flow<List<NotificationRecord>>
     suspend fun markNotificationAsRead(notificationId: String)
+
+    // --- Friend Requests & Friends ---
+    fun getFriendRequestIdForUsers(otherUid: String): String
+    fun observeFriendRequests(): Flow<List<FriendRequest>>
+    suspend fun sendFriendRequest(targetUid: String)
+    suspend fun acceptFriendRequest(requestId: String)
+    suspend fun removeFriendOrRequest(otherUid: String)
+
+    // --- Free Audio & Video Call Signaling ---
+    fun observeCallSessions(): Flow<List<CallSession>>
+    suspend fun createCallSession(
+        callee: UserProfile,
+        callerName: String,
+        callerPhotoUrl: String?,
+        callType: String,
+        offerSdp: String
+    ): String
+    suspend fun answerCallSession(callId: String, answerSdp: String)
+    suspend fun updateCallStatus(callId: String, status: String)
+    suspend fun addIceCandidate(
+        callId: String,
+        participantUids: List<String>,
+        sdpMid: String,
+        sdpMLineIndex: Int,
+        candidate: String
+    )
+    fun observeIceCandidates(callId: String): Flow<List<IceCandidateRecord>>
+
+    // --- Everyday Activities Community Feed & Emoji Reactions ---
+    fun observeActivityPosts(): Flow<List<ActivityPost>> = kotlinx.coroutines.flow.emptyFlow()
+    fun observeMyActivityReactions(): Flow<Map<String, String>> = kotlinx.coroutines.flow.emptyFlow()
+    suspend fun createActivityPost(
+        authorProfile: UserProfile?,
+        content: String,
+        moodEmoji: String,
+        activityTag: String
+    ): String = ""
+    suspend fun toggleActivityReaction(postId: String, emoji: String) {}
+    suspend fun deleteActivityPost(postId: String) {}
+    suspend fun toggleChatMessageReaction(conversationId: String, messageId: String, emoji: String) {}
+
     suspend fun deleteUserAccount(googleIdToken: String? = null)
 }
 
@@ -104,10 +149,15 @@ class SogoRepository(
     override fun observeMembers(): Flow<List<UserProfile>> = flow {
         val uid = requireUserId()
         val path = "users"
-        val query = db.collection("users").orderBy("displayName", Query.Direction.ASCENDING)
+        // Bounded real-time directory query keeps client memory and reads O(1) even at 50,000+ users
+        val query = db.collection("users")
+            .orderBy("updatedAt", Query.Direction.DESCENDING)
+            .limit(MEMBERS_FEED_LIMIT)
         query.snapshots()
             .map { snapshot ->
-                snapshot.toObjects(UserProfile::class.java).filter { it.userId != uid }
+                snapshot.toObjects(UserProfile::class.java)
+                    .filter { it.userId != uid }
+                    .sortedWith(compareByDescending<UserProfile> { it.isOnline }.thenBy { it.displayName.lowercase() })
             }
             .catch { error ->
                 if (error !is CancellationException && auth.currentUser != null) {
@@ -206,6 +256,7 @@ class SogoRepository(
         val path = "conversations"
         db.collection("conversations")
             .whereArrayContains("participantUids", uid)
+            .limit(CONVERSATIONS_LIMIT)
             .snapshots()
             .map { snapshot -> snapshot.toObjects(Conversation::class.java) }
             .catch { error ->
@@ -251,6 +302,7 @@ class SogoRepository(
         db.collection("conversations").document(conversationId).collection("messages")
             .whereArrayContains("participantUids", uid)
             .orderBy("createdAt", Query.Direction.ASCENDING)
+            .limitToLast(MESSAGES_LIMIT)
             .snapshots()
             .map { snapshot -> snapshot.toObjects(ChatMessage::class.java) }
             .catch { error ->
@@ -439,6 +491,7 @@ class SogoRepository(
         db.collection("notifications")
             .whereEqualTo("userId", uid)
             .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(NOTIFICATIONS_LIMIT)
             .snapshots()
             .map { snapshot -> snapshot.toObjects(NotificationRecord::class.java) }
             .catch { error ->
@@ -457,6 +510,462 @@ class SogoRepository(
             docRef.update("isRead", true).await()
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+        }
+    }
+
+    // --- Friend Requests & Friends ---
+
+    override fun getFriendRequestIdForUsers(otherUid: String): String {
+        val uid = requireUserId()
+        val pair = listOf(uid, otherUid).sorted()
+        return "fr_${pair[0]}_${pair[1]}"
+    }
+
+    override fun observeFriendRequests(): Flow<List<FriendRequest>> = flow {
+        val uid = requireUserId()
+        val path = "friend_requests"
+        db.collection("friend_requests")
+            .whereArrayContains("participantUids", uid)
+            .limit(FRIEND_REQUESTS_LIMIT)
+            .snapshots()
+            .map { snapshot -> snapshot.toObjects(FriendRequest::class.java) }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun sendFriendRequest(targetUid: String) {
+        val uid = requireUserId()
+        if (targetUid == uid) return
+        val reqId = getFriendRequestIdForUsers(targetUid)
+        val docRef = db.collection("friend_requests").document(reqId)
+        val participants = listOf(uid, targetUid).sorted()
+
+        try {
+            val existingSnap = docRef.get().await()
+            if (existingSnap.exists()) {
+                val existing = existingSnap.toObject(FriendRequest::class.java)
+                if (existing != null && existing.status == "PENDING" && existing.recipientId == uid) {
+                    docRef.update(
+                        mapOf(
+                            "status" to "ACCEPTED",
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+                }
+                return
+            }
+
+            val payload = mapOf(
+                "requestId" to reqId,
+                "requesterId" to uid,
+                "recipientId" to targetUid,
+                "participantUids" to participants,
+                "status" to "PENDING",
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun acceptFriendRequest(requestId: String) {
+        requireUserId()
+        val docRef = db.collection("friend_requests").document(requestId)
+        try {
+            docRef.update(
+                mapOf(
+                    "status" to "ACCEPTED",
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun removeFriendOrRequest(otherUid: String) {
+        requireUserId()
+        val reqId = getFriendRequestIdForUsers(otherUid)
+        val docRef = db.collection("friend_requests").document(reqId)
+        try {
+            docRef.delete().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docRef.path)
+            throw e
+        }
+    }
+
+    // --- Free Live Audio & Video Call Signaling (Open to all non-blocked members) ---
+
+    override fun observeCallSessions(): Flow<List<CallSession>> = flow {
+        val uid = requireUserId()
+        val path = "call_sessions"
+        db.collection("call_sessions")
+            .whereArrayContains("participantUids", uid)
+            .limit(CALL_SESSIONS_LIMIT)
+            .snapshots()
+            .map { snapshot -> snapshot.toObjects(CallSession::class.java) }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun createCallSession(
+        callee: UserProfile,
+        callerName: String,
+        callerPhotoUrl: String?,
+        callType: String,
+        offerSdp: String
+    ): String {
+        val uid = requireUserId()
+        val callId = "call_${UUID.randomUUID().toString().replace("-", "")}"
+        val participants = listOf(uid, callee.userId).sorted()
+        val docRef = db.collection("call_sessions").document(callId)
+        val payload = mutableMapOf<String, Any?>(
+            "callId" to callId,
+            "callerId" to uid,
+            "callerName" to callerName.trim().ifBlank { "Member" }.take(60),
+            "calleeId" to callee.userId,
+            "calleeName" to callee.displayName.trim().ifBlank { "Member" }.take(60),
+            "participantUids" to participants,
+            "callType" to if (callType == "AUDIO") "AUDIO" else "VIDEO",
+            "status" to "RINGING",
+            "offerSdp" to offerSdp,
+            "createdAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        if (!callerPhotoUrl.isNullOrBlank()) {
+            payload["callerPhotoUrl"] = callerPhotoUrl
+        }
+        if (!callee.photoUrl.isNullOrBlank()) {
+            payload["calleePhotoUrl"] = callee.photoUrl
+        }
+        try {
+            docRef.set(payload).await()
+            return callId
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun answerCallSession(callId: String, answerSdp: String) {
+        requireUserId()
+        val docRef = db.collection("call_sessions").document(callId)
+        try {
+            docRef.update(
+                mapOf(
+                    "status" to "ANSWERED",
+                    "answerSdp" to answerSdp,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun updateCallStatus(callId: String, status: String) {
+        requireUserId()
+        val docRef = db.collection("call_sessions").document(callId)
+        try {
+            docRef.update(
+                mapOf(
+                    "status" to status,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun addIceCandidate(
+        callId: String,
+        participantUids: List<String>,
+        sdpMid: String,
+        sdpMLineIndex: Int,
+        candidate: String
+    ) {
+        val uid = requireUserId()
+        val candId = "cand_${UUID.randomUUID().toString().replace("-", "")}"
+        val docRef = db.collection("call_sessions").document(callId)
+            .collection("candidates").document(candId)
+        val payload = mapOf(
+            "candidateId" to candId,
+            "senderId" to uid,
+            "participantUids" to participantUids,
+            "sdpMid" to sdpMid.take(64),
+            "sdpMLineIndex" to sdpMLineIndex.coerceIn(0, 32),
+            "candidate" to candidate,
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        try {
+            docRef.set(payload).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+        }
+    }
+
+    override fun observeIceCandidates(callId: String): Flow<List<IceCandidateRecord>> = flow {
+        val uid = requireUserId()
+        val path = "call_sessions/$callId/candidates"
+        db.collection("call_sessions").document(callId).collection("candidates")
+            .whereArrayContains("participantUids", uid)
+            .limit(ICE_CANDIDATES_LIMIT)
+            .snapshots()
+            .map { snapshot -> snapshot.toObjects(IceCandidateRecord::class.java) }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    // --- Everyday Activities Community Feed & Emoji Reactions ---
+
+    override fun observeActivityPosts(): Flow<List<ActivityPost>> = flow {
+        requireUserId()
+        val path = "activity_posts"
+        db.collection("activity_posts")
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(ACTIVITY_POSTS_LIMIT)
+            .snapshots()
+            .map { snapshot -> snapshot.toObjects(ActivityPost::class.java) }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override fun observeMyActivityReactions(): Flow<Map<String, String>> = flow {
+        val uid = requireUserId()
+        val path = "users/$uid/activity_reactions"
+        db.collection("users").document(uid).collection("activity_reactions")
+            .orderBy("updatedAt", Query.Direction.DESCENDING)
+            .limit(ACTIVITY_REACTIONS_LIMIT)
+            .snapshots()
+            .map { snapshot ->
+                snapshot.documents.mapNotNull { doc ->
+                    val postId = doc.getString("postId") ?: doc.id
+                    val emoji = doc.getString("emoji")
+                    if (!emoji.isNullOrBlank()) postId to emoji else null
+                }.toMap()
+            }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun createActivityPost(
+        authorProfile: UserProfile?,
+        content: String,
+        moodEmoji: String,
+        activityTag: String
+    ): String {
+        val uid = requireUserId()
+        val trimmedContent = content.trim().take(500)
+        require(trimmedContent.isNotEmpty()) { "Activity post cannot be empty." }
+
+        val postId = "post_${UUID.randomUUID().toString().replace("-", "")}"
+        val docRef = db.collection("activity_posts").document(postId)
+        val payload = mutableMapOf<String, Any?>(
+            "postId" to postId,
+            "authorId" to uid,
+            "authorName" to (authorProfile?.displayName?.trim()?.ifBlank { "SOGO Member" } ?: "SOGO Member").take(60),
+            "content" to trimmedContent,
+            "moodEmoji" to moodEmoji.trim().ifBlank { "✨" }.take(16),
+            "activityTag" to activityTag.trim().ifBlank { "Daily Moment" }.take(40),
+            "reactionCounts" to emptyMap<String, Long>(),
+            "totalReactions" to 0L,
+            "createdAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        if (!authorProfile?.photoUrl.isNullOrBlank()) {
+            payload["authorPhotoUrl"] = authorProfile?.photoUrl
+        }
+        if (!authorProfile?.city.isNullOrBlank()) {
+            payload["authorCity"] = authorProfile?.city?.take(60)
+        }
+
+        try {
+            docRef.set(payload).await()
+            return postId
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun toggleActivityReaction(postId: String, emoji: String) {
+        val uid = requireUserId()
+        val cleanEmoji = emoji.trim().take(16)
+        if (cleanEmoji.isEmpty()) return
+
+        val postRef = db.collection("activity_posts").document(postId)
+        val reactionRef = db.collection("users").document(uid)
+            .collection("activity_reactions").document(postId)
+
+        try {
+            db.runTransaction { transaction ->
+                val postSnap = transaction.get(postRef)
+                if (!postSnap.exists()) return@runTransaction null
+
+                val reactionSnap = transaction.get(reactionRef)
+                val existingEmoji = reactionSnap.getString("emoji")
+
+                val currentCountsRaw = postSnap.get("reactionCounts") as? Map<*, *>
+                val updatedCounts = mutableMapOf<String, Long>()
+                currentCountsRaw?.forEach { (key, value) ->
+                    val k = key as? String
+                    val v = (value as? Number)?.toLong() ?: 0L
+                    if (!k.isNullOrBlank() && v > 0L) {
+                        updatedCounts[k] = v
+                    }
+                }
+
+                if (existingEmoji == cleanEmoji) {
+                    // Remove reaction
+                    val nextCount = (updatedCounts[cleanEmoji] ?: 1L) - 1L
+                    if (nextCount > 0L) {
+                        updatedCounts[cleanEmoji] = nextCount
+                    } else {
+                        updatedCounts.remove(cleanEmoji)
+                    }
+                    transaction.delete(reactionRef)
+                } else {
+                    // Decrement previous emoji if switching reactions
+                    if (!existingEmoji.isNullOrBlank()) {
+                        val prevNext = (updatedCounts[existingEmoji] ?: 1L) - 1L
+                        if (prevNext > 0L) {
+                            updatedCounts[existingEmoji] = prevNext
+                        } else {
+                            updatedCounts.remove(existingEmoji)
+                        }
+                    }
+                    // Increment new emoji (preserve up to 40 distinct emoji buckets)
+                    if (updatedCounts.containsKey(cleanEmoji) || updatedCounts.size < 40) {
+                        updatedCounts[cleanEmoji] = (updatedCounts[cleanEmoji] ?: 0L) + 1L
+                    }
+                    transaction.set(
+                        reactionRef,
+                        mapOf(
+                            "userId" to uid,
+                            "postId" to postId,
+                            "emoji" to cleanEmoji,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                }
+
+                val newTotal = updatedCounts.values.sum().coerceAtLeast(0L)
+                transaction.update(
+                    postRef,
+                    mapOf(
+                        "reactionCounts" to updatedCounts,
+                        "totalReactions" to newTotal,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                null
+            }.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, postRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun deleteActivityPost(postId: String) {
+        val uid = requireUserId()
+        val postRef = db.collection("activity_posts").document(postId)
+        val ownReactionRef = db.collection("users").document(uid)
+            .collection("activity_reactions").document(postId)
+        try {
+            try { ownReactionRef.delete().await() } catch (_: Exception) {}
+            postRef.delete().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, postRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun toggleChatMessageReaction(conversationId: String, messageId: String, emoji: String) {
+        val uid = requireUserId()
+        val cleanEmoji = emoji.trim().take(16)
+        if (cleanEmoji.isEmpty()) return
+
+        val msgRef = db.collection("conversations").document(conversationId)
+            .collection("messages").document(messageId)
+        try {
+            db.runTransaction { transaction ->
+                val snap = transaction.get(msgRef)
+                if (!snap.exists()) return@runTransaction null
+                val rawReactions = snap.get("reactions") as? Map<*, *>
+                val nextReactions = mutableMapOf<String, String>()
+                rawReactions?.forEach { (k, v) ->
+                    val key = k as? String
+                    val value = v as? String
+                    if (!key.isNullOrBlank() && !value.isNullOrBlank()) {
+                        nextReactions[key] = value
+                    }
+                }
+                if (nextReactions[uid] == cleanEmoji) {
+                    nextReactions.remove(uid)
+                } else {
+                    nextReactions[uid] = cleanEmoji
+                }
+                transaction.update(msgRef, mapOf("reactions" to nextReactions))
+                null
+            }.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, msgRef.path)
+            throw e
         }
     }
 
@@ -513,6 +1022,34 @@ class SogoRepository(
                 try { doc.reference.delete().await() } catch (_: Exception) {}
             }
 
+            val ownFriendRequests = try {
+                db.collection("friend_requests").whereArrayContains("participantUids", uid).get().await()
+            } catch (_: Exception) { null }
+            ownFriendRequests?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (_: Exception) {}
+            }
+
+            val ownCallSessions = try {
+                db.collection("call_sessions").whereArrayContains("participantUids", uid).get().await()
+            } catch (_: Exception) { null }
+            ownCallSessions?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (_: Exception) {}
+            }
+
+            val ownActivityPosts = try {
+                db.collection("activity_posts").whereEqualTo("authorId", uid).get().await()
+            } catch (_: Exception) { null }
+            ownActivityPosts?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (_: Exception) {}
+            }
+
+            val ownActivityReactions = try {
+                db.collection("users").document(uid).collection("activity_reactions").get().await()
+            } catch (_: Exception) { null }
+            ownActivityReactions?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (_: Exception) {}
+            }
+
             docRef.delete().await()
             lastCommittedPresenceByUid.remove(uid)
 
@@ -536,6 +1073,15 @@ class SogoRepository(
 
     companion object {
         private const val RECENT_LOGIN_THRESHOLD_MS = 4 * 60 * 1000L
+        private const val MEMBERS_FEED_LIMIT = 120L
+        private const val CONVERSATIONS_LIMIT = 40L
+        private const val MESSAGES_LIMIT = 100L
+        private const val NOTIFICATIONS_LIMIT = 30L
+        private const val FRIEND_REQUESTS_LIMIT = 150L
+        private const val CALL_SESSIONS_LIMIT = 20L
+        private const val ICE_CANDIDATES_LIMIT = 50L
+        private const val ACTIVITY_POSTS_LIMIT = 50L
+        private const val ACTIVITY_REACTIONS_LIMIT = 100L
 
         fun getFirestoreInstance(context: Context): FirebaseFirestore {
             val dbId = context.applicationContext.getString(R.string.firestore_database_id)

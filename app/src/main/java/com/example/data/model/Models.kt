@@ -59,6 +59,7 @@ data class ChatMessage(
     val type: String = "TEXT", // "TEXT", "IMAGE", "VOICE", "STICKER"
     val mediaUrl: String? = null,
     val isRead: Boolean = false,
+    val reactions: Map<String, String> = emptyMap(),
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
@@ -95,3 +96,80 @@ data class NotificationRecord(
     val isRead: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null
 )
+
+enum class FriendStatus {
+    NONE,
+    REQUEST_SENT,
+    REQUEST_RECEIVED,
+    FRIENDS
+}
+
+@IgnoreExtraProperties
+data class FriendRequest(
+    @DocumentId val id: String = "",
+    val requestId: String = "",
+    val requesterId: String = "",
+    val recipientId: String = "",
+    val participantUids: List<String> = emptyList(),
+    val status: String = "PENDING", // "PENDING", "ACCEPTED"
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@IgnoreExtraProperties
+data class CallSession(
+    @DocumentId val id: String = "",
+    val callId: String = "",
+    val callerId: String = "",
+    val callerName: String = "",
+    val callerPhotoUrl: String? = null,
+    val calleeId: String = "",
+    val calleeName: String = "",
+    val calleePhotoUrl: String? = null,
+    val participantUids: List<String> = emptyList(),
+    val callType: String = "VIDEO", // "VIDEO", "AUDIO"
+    val status: String = "RINGING", // "RINGING", "ANSWERED", "DECLINED", "ENDED"
+    val offerSdp: String = "",
+    val answerSdp: String? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@IgnoreExtraProperties
+data class IceCandidateRecord(
+    @DocumentId val id: String = "",
+    val candidateId: String = "",
+    val senderId: String = "",
+    val participantUids: List<String> = emptyList(),
+    val sdpMid: String = "",
+    val sdpMLineIndex: Int = 0,
+    val candidate: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@IgnoreExtraProperties
+data class ActivityPost(
+    @DocumentId val id: String = "",
+    val postId: String = "",
+    val authorId: String = "",
+    val authorName: String = "",
+    val authorPhotoUrl: String? = null,
+    val authorCity: String? = null,
+    val content: String = "",
+    val moodEmoji: String = "✨",
+    val activityTag: String = "Daily Moment",
+    val reactionCounts: Map<String, Long> = emptyMap(),
+    val totalReactions: Long = 0L,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+
+@IgnoreExtraProperties
+data class ActivityReaction(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val postId: String = "",
+    val emoji: String = "",
+    @ServerTimestamp val updatedAt: Timestamp? = null
+)
+

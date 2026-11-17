@@ -26,13 +26,15 @@ import kotlinx.coroutines.launch
 data class AdUnitIds(
     val interstitialPrimaryId: String,
     val interstitialSecondaryId: String,
-    val rewardedId: String
+    val rewardedId: String,
+    val bannerId: String = ""
 )
 
 object AdMobConfig {
     // Official Google Mobile Ads sample test unit IDs (used automatically in DEBUG builds)
     const val TEST_INTERSTITIAL_UNIT_ID = "ca-app-pub-3940256099942544/1033173712"
     const val TEST_REWARDED_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"
+    const val TEST_BANNER_UNIT_ID = "ca-app-pub-3940256099942544/6300978111"
 
     // Production SOGO CHAT AND MEET AdMob unit IDs (used automatically in RELEASE builds)
     const val PROD_APP_ID = "ca-app-pub-9786472984542330~4017093946"
@@ -48,13 +50,15 @@ object AdMobConfig {
             AdUnitIds(
                 interstitialPrimaryId = TEST_INTERSTITIAL_UNIT_ID,
                 interstitialSecondaryId = TEST_INTERSTITIAL_UNIT_ID,
-                rewardedId = TEST_REWARDED_UNIT_ID
+                rewardedId = TEST_REWARDED_UNIT_ID,
+                bannerId = TEST_BANNER_UNIT_ID
             )
         } else {
             AdUnitIds(
                 interstitialPrimaryId = context.getString(R.string.admob_interstitial_primary_unit_id),
                 interstitialSecondaryId = context.getString(R.string.admob_interstitial_secondary_unit_id),
-                rewardedId = context.getString(R.string.admob_rewarded_unit_id)
+                rewardedId = context.getString(R.string.admob_rewarded_unit_id),
+                bannerId = context.getString(R.string.admob_banner_unit_id).trim()
             )
         }
     }
@@ -68,6 +72,11 @@ object AdMobConfig {
         if (lastShownMs > 0L && nowMs - lastShownMs < MIN_INTERSTITIAL_INTERVAL_MS) return false
         return true
     }
+
+    fun clampBannerOffsetY(rawOffsetY: Float, maxDragUpPx: Float): Float {
+        val upperLimit = if (maxDragUpPx > 0f) 0f else maxDragUpPx
+        return rawOffsetY.coerceIn(upperLimit, 0f)
+    }
 }
 
 class AdMobManager(
@@ -79,6 +88,7 @@ class AdMobManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val unitIds: AdUnitIds = AdMobConfig.resolveUnitIds(appContext, isDebug)
+    val bannerUnitId: String get() = unitIds.bannerId
 
     private val sessionStartMs: Long = clockMs()
     private var lastInterstitialShownMs: Long = 0L
