@@ -324,14 +324,14 @@
 
     <section class="hero">
       <div>
-        <div class="pill">● Android 7.0+ (API 24+) • 18+ Community</div>
+        <div class="pill">● Android 7.0+ (API 24+) • 18+ Community • Free Video Call</div>
         <h1>Kilalanin at Makipag-Chat nang Ligtas sa <span>SOGO CHAT AND MEET</span></h1>
         <p>
-          Isang modernong dark-mode social discovery at private messaging app para sa mga 18+ verified adults sa Pilipinas at abroad. Mabilis ang Google Sign-In, may live online status, at kumpleto sa safety controls.
+          Isang modernong dark-mode social discovery, free video calling, everyday activities, at private chat app para sa mga 18+ verified adults sa Pilipinas at abroad. Mabilis ang Google Sign-In, may emojis &amp; reactions, at kumpleto sa safety controls.
         </p>
         <div class="cta-row">
-          <a href="#how-to-use" class="btn-primary">Paano Gamitin</a>
-          <a href="#install" class="btn-secondary">APK Install Guide</a>
+          <a id="apk-download-hero" href="#install" class="btn-primary">Download APK</a>
+          <a href="#how-to-use" class="btn-secondary">Paano Gamitin</a>
         </div>
       </div>
       <img class="hero-img" src="docs/images/sogo-hero-showcase.jpg" alt="SOGO CHAT AND MEET Showcase" />
@@ -370,28 +370,32 @@
         </div>
         <div class="step-card">
           <div class="step-num">3</div>
-          <h3>Discover &amp; Filter</h3>
-          <p>Sa Main Dashboard, gamitin ang Search bar at Filter Chips para makita ang mga online members na tugma sa gusto mo.</p>
+          <h3>Discover, Friends &amp; Activities</h3>
+          <p>Sa Main Dashboard, mag-Add Friend, tingnan ang Online Strip, at mag-post o mag-react (Like, Heart, All Emojis) sa Everyday Activities.</p>
         </div>
         <div class="step-card">
           <div class="step-num">4</div>
-          <h3>Private Chat</h3>
-          <p>I-tap ang <strong>Chat &amp; Meet</strong> sa napiling profile, basahin ang detalye, at makipag-usap gamit ang text o quick stickers.</p>
+          <h3>Free Video Call &amp; Private Chat</h3>
+          <p>I-tap ang <strong>Video Free</strong> o <strong>Chat Now</strong>, gumamit ng Emoji Keyboard Drawer, stickers, at bubble reactions.</p>
         </div>
         <div class="step-card">
           <div class="step-num">5</div>
           <h3>Privacy &amp; Safety</h3>
-          <p>Gamitin ang Menu (⋮) para i-edit ang profile, itago ang Online status, mag-Block/Report, o permanenteng burahin ang account.</p>
+          <p>Gamitin ang Menu (⋮) para sa personal Dashboard toggles, Edit Profile, Block/Report Member, o Delete Account.</p>
         </div>
       </div>
     </section>
 
     <section id="install">
       <div class="install-box">
-        <h2 class="section-title">Paano I-Install ang APK</h2>
-        <p class="section-desc" style="margin-bottom: 8px;">Compatible sa Android 7.0 (API 24) pataas.</p>
+        <h2 class="section-title">Paano I-Download at I-Install ang APK</h2>
+        <p class="section-desc" style="margin-bottom: 14px;">Compatible sa Android 7.0 (API 24) pataas.</p>
+        <div class="cta-row" style="margin-bottom: 16px;">
+          <a id="apk-download-install" href="#" class="btn-primary" style="display:none;">Download SOGO-CHAT-AND-MEET.apk</a>
+          <a id="apk-releases-link" href="#" class="btn-secondary" style="display:none;">View GitHub Releases</a>
+        </div>
         <ol>
-          <li>I-download ang pinakabagong <strong>SOGO CHAT AND MEET (.apk)</strong> file sa iyong Android phone.</li>
+          <li>I-download ang pinakabagong <strong>SOGO-CHAT-AND-MEET.apk</strong> mula sa GitHub Releases button sa itaas.</li>
           <li>Buksan ang file sa <strong>Downloads / File Manager</strong>.</li>
           <li>Kapag lumabas ang prompt, piliin ang <strong>Settings → Allow from this source</strong> para sa APK installation.</li>
           <li>I-tap ang <strong>Install</strong>, hintaying matapos, at buksan ang app.</li>
@@ -401,8 +405,35 @@
 
     <footer>
       <p><strong>SOGO CHAT AND MEET</strong> (<code>com.sogo.chatandmeet</code>) • Strictly 18+ Verified Adults Only</p>
-      <p style="margin-top: 6px;">Paalala: Ang live audio/video calling at chat photo/voice upload ay naka-schedule pa para sa susunod na update.</p>
+      <p style="margin-top: 6px;">Includes Live Member Discovery, Free WebRTC Audio/Video Calling, Everyday Activities, Private Chat &amp; Emojis.</p>
     </footer>
   </div>
+
+  <script>
+    (function () {
+      var host = window.location.hostname || "";
+      if (host.endsWith(".github.io")) {
+        var owner = host.split(".")[0];
+        var segments = window.location.pathname.split("/").filter(Boolean);
+        var repo = segments.length > 0 ? segments[0] : host;
+        var releasesUrl = "https://github.com/" + owner + "/" + repo + "/releases";
+        var apkUrl = releasesUrl + "/latest/download/SOGO-CHAT-AND-MEET.apk";
+
+        var heroBtn = document.getElementById("apk-download-hero");
+        var installBtn = document.getElementById("apk-download-install");
+        var releasesBtn = document.getElementById("apk-releases-link");
+
+        if (heroBtn) heroBtn.href = apkUrl;
+        if (installBtn) {
+          installBtn.href = apkUrl;
+          installBtn.style.display = "inline-block";
+        }
+        if (releasesBtn) {
+          releasesBtn.href = releasesUrl;
+          releasesBtn.style.display = "inline-block";
+        }
+      }
+    })();
+  </script>
 </body>
 </html>

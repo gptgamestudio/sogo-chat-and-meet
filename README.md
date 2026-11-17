@@ -4,9 +4,12 @@
 
 # SOGO CHAT AND MEET
 
-**Private 18+ Social Discovery & Real-Time Private Chat for Android**
+**Private 18+ Social Discovery, Free Video Calls, Everyday Activities & Real-Time Chat for Android**
 
 *Matte Obsidian • Royal Burgundy • Champagne Gold*
+
+[![Download APK](https://img.shields.io/badge/Download-SOGO--CHAT--AND--MEET.apk-2EE59D?style=for-the-badge&logo=android&logoColor=0F0E11)](../../releases/latest/download/SOGO-CHAT-AND-MEET.apk)
+[![All Releases](https://img.shields.io/badge/GitHub-Releases-D4AF37?style=for-the-badge&logo=github&logoColor=0F0E11)](../../releases)
 
 [![Platform](https://img.shields.io/badge/Android-7.0%2B%20(API%2024%2B)-6D1226?style=for-the-badge&logo=android&logoColor=D4AF37)](https://developer.android.com)
 [![Age Rating](https://img.shields.io/badge/Community-18%2B%20Adults%20Only-17151B?style=for-the-badge&labelColor=D4AF37)](https://support.google.com/googleplay/android-developer)
@@ -20,16 +23,27 @@
 
 ---
 
+## Direct Android APK Download
+
+- **Direct APK Link (Latest Build):** [`SOGO-CHAT-AND-MEET.apk`](../../releases/latest/download/SOGO-CHAT-AND-MEET.apk)
+- **Releases Page:** [GitHub Releases](../../releases)
+
+> **Paalala sa Auto-Build:** Tuwing may push sa `main` branch, awtomatikong binubuo ng `.github/workflows/publish-apk.yml` ang **`SOGO-CHAT-AND-MEET.apk`** at inilalagay sa **`latest` Release** (`https://github.com/<USERNAME>/<REPO>/releases/latest/download/SOGO-CHAT-AND-MEET.apk`). *(Kung gusto mong direktang magamit ang pre-registered Google Sign-In SHA-1 debug keystore o production upload keystore, mag-upload din ng exported APK mula sa AI Studio o idagdag ang keystore secrets sa GitHub Settings → Secrets.)*
+
+---
+
 ## Ano ang SOGO CHAT AND MEET?
 
-Ang **SOGO CHAT AND MEET** ay isang modernong Android social discovery at one-on-one private chat app na ginawa para sa mga **18+ verified adults** sa Pilipinas at sa buong mundo. Idinisenyo ito sa malinis at marangyang **Dark Burgundy & Champagne Gold** interface na mabilis, magaan, at may kumpletong privacy controls.
+Ang **SOGO CHAT AND MEET** ay isang modernong Android social discovery, free video calling, everyday activities community, at one-on-one private chat app na ginawa para sa mga **18+ verified adults** sa Pilipinas at sa buong mundo. Idinisenyo ito sa malinis at marangyang **Dark Burgundy & Champagne Gold** interface na mabilis, magaan, at may kumpletong privacy controls.
 
 ### Mga Pangunahing Features
 - **One-Tap Google Sign-In:** Mabilis at ligtas na pag-login gamit ang iyong Google account—hindi na kailangan gumawa ng bagong password.
 - **18+ Age-Verified Onboarding:** May automatic birthday validation para siguradong 18 years old pataas lang ang maaaring sumali.
-- **Live Member Discovery & Smart Filters:** Makikita agad kung sino ang **Online Now** at puwedeng mag-filter ayon sa **Gender**, **Location** (*Philippines 🇵🇭* o *Overseas 🌏*), **Age Range** (*18–24, 25–34, 35+*), o mag-search gamit ang pangalan, lungsod, at hobbies.
-- **Private 1-on-1 Chat & Read Receipts:** Real-time messaging na may *Sent (✓)* at *Read (✓✓)* checkmarks, at may built-in Pinoy conversation starters (*"Kumusta! 👋"*, *"Tara kape? ☕"*, *"Kain tayo! 🍲"*).
-- **Kumpletong Safety & Account Controls:** May instant **Block Member**, **Report Member**, Online/Offline visibility toggle, Profile Editor, at permanent **Delete Account** option.
+- **Live Member Discovery, Online Strip & Add Friend:** Makikita agad kung sino ang **Online Now** sa quick strip at feed; puwedeng mag-**Add Friend**, mag-filter ayon sa **Friends**, **Gender**, **Location** (*Philippines 🇵🇭* o *Overseas 🌏*), at **Age Range** (*18–24, 25–34, 35+*), o mag-search gamit ang pangalan, lungsod, at hobbies.
+- **Free 1-on-1 Video & Voice Calling:** Bukas at libre para sa lahat ng members—direktang peer-to-peer WebRTC audio/video calling na may mute, speaker, camera switch, at live call controls.
+- **Everyday Activities Community Feed:** Lahat ng users ay puwedeng mag-post ng araw-araw na updates at mood tags, at mag-react gamit ang **👍 Like**, **❤️ Heart**, at kumpletong **All Emojis** picker.
+- **Private 1-on-1 Chat, Emoji Picker & Reactions:** Real-time messaging na may *Sent (✓)* at *Read (✓✓)* checkmarks, built-in **Emoji Picker Drawer**, Pinoy quick greeting stickers, at interactive emoji reactions sa bawat message bubble.
+- **User-Only Dashboard Settings & Safety Controls:** May instant **Block Member**, **Report Member**, Online/Offline visibility toggle, personal dashboard layout toggles, Profile Editor, at permanent **Delete Account** option. Ang app updates at configuration ay owner-managed lamang.
 
 ---
 
@@ -40,7 +54,7 @@ Ang **SOGO CHAT AND MEET** ay isang modernong Android social discovery at one-on
 | Live Social Discovery Feed | Private One-on-One Chat |
 | :---: | :---: |
 | <img src="docs/images/sogo-discovery-dashboard.jpg" alt="SOGO CHAT AND MEET Discovery Dashboard" width="340" /> | <img src="docs/images/sogo-private-chat.jpg" alt="SOGO CHAT AND MEET Private Chat" width="340" /> |
-| *Real-time online indicator, 18+ verified badges, location tags, at one-tap "Chat & Meet" button.* | *Clean dark-mode chat bubbles, gold read receipts, quick reply chips, at safety controls.* |
+| *Live online strip, 18+ verified badges, Add Friend, Free Video Call, Everyday Activities, at Chat Now.* | *Clean dark-mode chat bubbles, gold read receipts, Emoji Drawer, message reactions, at safety controls.* |
 
 </div>
 
@@ -49,7 +63,7 @@ Ang **SOGO CHAT AND MEET** ay isang modernong Android social discovery at one-on
 ## Paano Gamitin ang App (Step-by-Step Guide)
 
 ### Step 1: Mag-Sign In Gamit ang Google
-Buksan ang **SOGO CHAT AND MEET** at pindutin ang **Continue with Google**. Piliin ang Google account na nais mong gamitin para awtomatikong ma-verify ang iyong login.
+Buksan ang **SOGO CHAT AND MEET** at pindutin ang **Sign In with Google**. Piliin ang Google account na nais mong gamitin para awtomatikong ma-verify ang iyong login.
 
 ### Step 2: Kumpletuhin ang Iyong 18+ Profile
 Sa unang pagbukas, ilagay ang iyong basic profile details:
@@ -58,34 +72,31 @@ Sa unang pagbukas, ilagay ang iyong basic profile details:
 3. **Personality** vibe, **Interests**, at maikling **About Me** bio.
 4. Pindutin ang **Complete Profile** para makapasok sa dashboard.
 
-### Step 3: Maghanap at Mag-Filter ng Members
+### Step 3: Maghanap, Mag-Add Friend, o Tumawag nang Libre
 Sa **Main Dashboard**, makikita mo ang bilang ng mga online members sa itaas:
-- Gamitin ang **Search bar** para maghanap gamit ang pangalan, city, o interests.
-- I-tap ang mga **Filter Chips** (*Online Now*, *Women / Men / Non-Binary*, *Philippines / Overseas*, *18–24 / 25–34 / 35+*) para mabilis mahanap ang gusto mong kausap.
+- Gamitin ang **Search bar** at **Filter Chips** (*Online Now*, *Friends*, *Women / Men / Non-Binary*, *Philippines / Overseas*, *18–24 / 25–34 / 35+*).
+- Piliin sa bawat member card kung mag-**Add Friend**, **Video Free** (libreng video call), o **Chat Now**.
+- Lumipat sa **Activities** tab para mag-post ng iyong daily update o mag-react gamit ang **👍 Like**, **❤️ Heart**, at **All Emojis**.
 
-### Step 4: Tingnan ang Profile at Makipag-Chat
-- Pindutin ang **Chat & Meet** sa kahit sinong member card.
-- Sa **Member Profile** tab, makikita ang buong bio, personality, at interests.
-- Lumipat sa **Private Chat** tab o pindutin ang **Start Private Conversation** para mag-send ng mensahe o quick stickers.
+### Step 4: Private Chat & Emojis
+- Sa **Member Profile** tab, makikita ang buong bio, personality, at interests, plus **Free Video Call** at **Chat Now**.
+- Sa **Private Chat** tab, gamitin ang **😊 Emoji Picker Drawer**, quick Pinoy stickers, at mag-tap ng kahit anong message bubble para mag-react gamit ang emojis.
 
-### Step 5: I-Manage ang Privacy, Status, at Safety
-Buksan ang **Options Menu (`⋮`)** sa kanang itaas ng Dashboard o Chat screen:
-- **Edit My Profile:** I-update ang iyong bio, city, personality, o interests anumang oras.
-- **Set Status Online / Offline:** Itago o ipakita ang iyong active green dot status.
-- **Block / Report Member:** Nasa loob ng bawat profile at chat menu para sa agarang proteksyon.
-- **Support SOGO • Watch Ad (+1 ⭐):** Opsyonal na panoorin ang maikling rewarded ad para suportahan ang app.
-- **Delete Account:** Permanenteng burahin ang iyong profile at login kung nais umalis.
+### Step 5: Personal Dashboard Settings & Safety
+Buksan ang **Options Menu (`⋮`)** sa kanang itaas ng Dashboard:
+- **Edit My Profile** at **Set Status: Online / Offline**.
+- **Online Strip: Shown / Hidden** at **Activities Highlight: Shown / Hidden**.
+- **Support SOGO • Watch Ad (+1 ⭐)**, **Delete Account**, at **Sign Out**.
+- Gamitin ang **Report Member** o **Block Member** sa loob ng profile/chat para sa agarang proteksyon.
 
 ---
 
 ## Paano I-Install ang APK sa Android
 
-1. I-download ang **`SOGO-CHAT-AND-MEET.apk`** file mula sa opisyal na **Releases** page ng repository na ito (o mula sa ibinigay na APK link).
+1. I-download ang pinakabagong **[`SOGO-CHAT-AND-MEET.apk`](../../releases/latest/download/SOGO-CHAT-AND-MEET.apk)** mula sa **Releases** page ng repository na ito.
 2. Sa iyong Android phone (**Android 7.0 Nougat / API 24 o mas bago**), buksan ang downloaded `.apk` file mula sa **Files / Downloads**.
 3. Kung hihingi ng pahintulot ang phone, i-tap ang **Settings** → i-enable ang **Allow from this source** (*Install unknown apps*), pagkatapos ay i-tap ang **Install**.
 4. Buksan ang **SOGO CHAT AND MEET** mula sa iyong home screen at mag-sign in gamit ang Google.
-
-> **Paalala sa Bersyon (V1.0):** Ang kasalukuyang bersyon ay naka-focus sa real-time member discovery at private text/sticker messaging. Ang live voice/video calling at chat photo/voice attachments ay naka-marka pa bilang *Not Implemented Yet* sa loob ng app.
 
 ---
 
