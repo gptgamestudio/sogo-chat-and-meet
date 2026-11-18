@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "492343241434",
+    "project_id": "gen-lang-client-0431487205",
+    "storage_bucket": "gen-lang-client-0431487205.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:492343241434:android:fe07928830aa091f6c93e3",
+        "android_client_info": {
+          "package_name": "com.sogo.chatandmeet"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "492343241434-4ft69spefs37earb37v05br4jgp1oc5q.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.sogo.chatandmeet",
+            "certificate_hash": "db6bf217a65214eb22a8526ada9de115bf51507f"
+          }
+        },
+        {
+          "client_id": "492343241434-d88o6c6c8bmkos9f83rfjkei90h57788.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.sogo.chatandmeet",
+            "certificate_hash": "39520d71bfe3077d29895ca7078b5a4ebcc0980f"
+          }
+        },
+        {
+          "client_id": "492343241434-6vth7qrvhbotitfouho1ssoocvt72efb.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmUIdIwNqoz5npjBMMOxJZY0CqXtJdXfo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "492343241434-6vth7qrvhbotitfouho1ssoocvt72efb.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
