@@ -3,19 +3,27 @@ package com.example
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -49,6 +58,7 @@ import com.example.call.LiveCallOverlay
 import com.example.data.model.FriendStatus
 import com.example.data.model.UserProfile
 import com.example.ui.auth.AuthScreen
+import com.example.ui.auth.FirebaseAuthListener
 import com.example.ui.auth.signOut
 import com.example.ui.chat.ChatViewModel
 import com.example.ui.chat.ProfileAndChatScreen
@@ -61,7 +71,6 @@ import com.example.ui.theme.PhilippineGold
 import com.example.ui.theme.SecondaryMuted
 import com.example.ui.theme.SogoChatTheme
 import com.google.firebase.Firebase
-import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 
 class MainActivity : ComponentActivity() {
@@ -83,33 +92,42 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AppContent() {
-    var currentUser by remember { mutableStateOf(Firebase.auth.currentUser) }
+    val authListener = remember { FirebaseAuthListener(Firebase.auth) }
+    val authSession by authListener.state.collectAsState()
 
-    DisposableEffect(Unit) {
-        val listener = FirebaseAuth.AuthStateListener { auth ->
-            currentUser = auth.currentUser
-        }
-        Firebase.auth.addAuthStateListener(listener)
+    DisposableEffect(authListener) {
+        authListener.start()
         onDispose {
-            Firebase.auth.removeAuthStateListener(listener)
+            authListener.stop()
         }
     }
 
-    if (currentUser == null) {
+    LaunchedEffect(authSession.userId, authSession.sessionNonce, authSession.lastTransitionSource) {
+        Log.d(
+            "MainActivityAuth",
+            "Auth session state: authenticated=${authSession.isAuthenticated}, " +
+                "sessionNonce=${authSession.sessionNonce}, source=${authSession.lastTransitionSource}"
+        )
+    }
+
+    val activeUid = authSession.userId
+    if (activeUid == null) {
         // Render login UI with Google Sign-In button
         AuthScreen(
             onAuthSuccess = {
-                currentUser = Firebase.auth.currentUser
+                authListener.syncNow("google_sign_in_callback")
             }
         )
     } else {
-        val uid = currentUser!!.uid
-        // Key by uid so signing out or switching accounts resets Compose UI state
-        key(uid) {
+        // Key by uid + session nonce so signing out or re-signing-in starts fresh observers
+        key(activeUid, authSession.sessionNonce) {
             PostLoginFlow(
-                currentUserId = uid,
+                currentUserId = activeUid,
+                sessionNonce = authSession.sessionNonce,
+                googleDisplayName = authSession.displayName.orEmpty(),
+                googlePhotoUrl = authSession.photoUrl,
                 onSignOut = {
-                    currentUser = null
+                    authListener.markSignedOut("user_sign_out")
                 }
             )
         }
@@ -119,17 +137,41 @@ fun AppContent() {
 @Composable
 fun PostLoginFlow(
     currentUserId: String,
+    sessionNonce: Int,
+    googleDisplayName: String = "",
+    googlePhotoUrl: String? = null,
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
-    val dashboardViewModel: MainDashboardViewModel = viewModel(key = "dashboard_$currentUserId")
+    val dashboardViewModel: MainDashboardViewModel = viewModel(
+        key = "dashboard_${currentUserId}_$sessionNonce"
+    )
+    LaunchedEffect(currentUserId, sessionNonce) {
+        dashboardViewModel.ensureSessionStarted(currentUserId)
+    }
     val uiState by dashboardViewModel.uiState.collectAsState()
 
-    when {
-        // 1. Loading state while checking Firestore profile
-        uiState.isLoading && uiState.currentUserProfile == null -> {
+    val postLoginDestination = when {
+        (!uiState.hasResolvedProfile && uiState.profileLoadError == null) ||
+            (uiState.isLoading && uiState.currentUserProfile == null && uiState.profileLoadError == null) -> "loading_profile"
+        uiState.profileLoadError != null && uiState.currentUserProfile == null -> "profile_load_error"
+        uiState.currentUserProfile == null -> "member_profile_setup"
+        else -> "main_dashboard"
+    }
+
+    LaunchedEffect(postLoginDestination, sessionNonce) {
+        Log.d(
+            "MainActivityAuth",
+            "PostLoginFlow destination=$postLoginDestination (sessionNonce=$sessionNonce, " +
+                "hasResolvedProfile=${uiState.hasResolvedProfile}, hasProfileError=${uiState.profileLoadError != null})"
+        )
+    }
+
+    when (postLoginDestination) {
+        // 1. Loading state while checking Firestore profile for this signed-in session
+        "loading_profile" -> {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -159,10 +201,67 @@ fun PostLoginFlow(
             }
         }
 
-        // 2. User has no profile in Firestore -> Display Member Profile Setup
-        uiState.currentUserProfile == null -> {
+        // 2. Profile lookup failed (e.g., transient network/permission hiccup) -> Let user retry without losing existing profile
+        "profile_load_error" -> {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0F0E11))
+                    .padding(28.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "Unable to Open Member Dashboard",
+                        color = PhilippineGold,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = uiState.profileLoadError ?: "Could not verify your SOGO profile right now.",
+                        color = OffWhiteText,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(22.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                signOut(credentialManager, coroutineScope, onSignOut)
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Sign Out", color = OffWhiteText)
+                        }
+                        Button(
+                            onClick = { dashboardViewModel.retrySession(currentUserId) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = PhilippineGold,
+                                contentColor = Color.Black
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Retry", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Verified user has no profile in Firestore -> Display Member Profile Setup
+        "member_profile_setup" -> {
             MemberProfileSetupScreen(
                 initialProfile = null,
+                defaultDisplayName = googleDisplayName,
+                defaultPhotoUrl = googlePhotoUrl,
                 isSaving = uiState.isSavingProfile,
                 externalErrorMessage = uiState.errorMessage,
                 onDismissError = { dashboardViewModel.clearError() },
@@ -186,10 +285,11 @@ fun PostLoginFlow(
             )
         }
 
-        // 3. User profile exists -> Maintain exactly TWO main navigation destinations
+        // 4. User profile exists -> Maintain exactly TWO main navigation destinations
         else -> {
             TwoDestinationNavigator(
                 currentUserId = currentUserId,
+                sessionNonce = sessionNonce,
                 dashboardViewModel = dashboardViewModel,
                 onSignOut = {
                     dashboardViewModel.setPresence(false, force = true)
@@ -203,6 +303,7 @@ fun PostLoginFlow(
 @Composable
 fun TwoDestinationNavigator(
     currentUserId: String,
+    sessionNonce: Int,
     dashboardViewModel: MainDashboardViewModel,
     onSignOut: () -> Unit
 ) {
@@ -240,7 +341,7 @@ fun TwoDestinationNavigator(
         ?: remember { mutableStateOf(0) })
 
     val dashboardState by dashboardViewModel.uiState.collectAsState()
-    val callViewModel: CallViewModel = viewModel(key = "call_$currentUserId")
+    val callViewModel: CallViewModel = viewModel(key = "call_${currentUserId}_$sessionNonce")
     val callUiState by callViewModel.uiState.collectAsState()
 
     var pendingOutgoingCall by remember { mutableStateOf<Pair<UserProfile, String>?>(null) }

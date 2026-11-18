@@ -110,11 +110,32 @@ jobs:
           print("Verified app/google-services.json for com.sogo.chatandmeet (Web OAuth client present).")
           PY
 
-      - name: Generate ephemeral CI debug keystore
+      - name: Prepare CI debug keystore
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
-          keytool -genkey -v -keystore debug.keystore -storepass android \
-            -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
-            -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          python3 - <<'PY'
+          import base64, os, subprocess, sys
+          raw = os.environ.get("DEBUG_KEYSTORE_BASE64", "").strip()
+          if raw:
+              try:
+                  data = base64.b64decode(raw, validate=True)
+              except Exception:
+                  print("ERROR: DEBUG_KEYSTORE_BASE64 is not valid Base64.", file=sys.stderr)
+                  sys.exit(1)
+              with open("debug.keystore", "wb") as f:
+                  f.write(data)
+              os.chmod("debug.keystore", 0o600)
+              print("Restored debug.keystore from DEBUG_KEYSTORE_BASE64 secret.")
+          elif not os.path.isfile("debug.keystore"):
+              subprocess.run([
+                  "keytool", "-genkey", "-v", "-keystore", "debug.keystore",
+                  "-storepass", "android", "-alias", "androiddebugkey",
+                  "-keypass", "android", "-keyalg", "RSA", "-keysize", "2048",
+                  "-validity", "10000", "-dname", "CN=Android Debug,O=Android,C=US"
+              ], check=True)
+              print("Generated ephemeral CI debug.keystore.")
+          PY
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4

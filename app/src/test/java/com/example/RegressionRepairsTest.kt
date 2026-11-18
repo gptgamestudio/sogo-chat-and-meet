@@ -86,6 +86,7 @@ class RegressionRepairsTest {
         val markReadCalls = mutableListOf<Pair<String, String>>()
         val markedMessageIdsOnServer = mutableSetOf<String>()
 
+        var profileObserverError: Exception? = null
         var saveProfileError: Exception? = null
         var deleteAccountError: Exception? = null
         var savedProfiles = mutableListOf<UserProfile>()
@@ -95,7 +96,10 @@ class RegressionRepairsTest {
         override fun getCurrentUserId(): String? = currentUid
         override fun requireUserId(): String = currentUid ?: throw IllegalStateException("Not signed in")
 
-        override fun observeCurrentUserProfile(userId: String): Flow<UserProfile?> = currentUserProfileFlow
+        override fun observeCurrentUserProfile(userId: String): Flow<UserProfile?> =
+            profileObserverError?.let { err ->
+                kotlinx.coroutines.flow.flow { throw err }
+            } ?: currentUserProfileFlow
 
         override fun observeMembers(): Flow<List<UserProfile>> = membersFlow
 
@@ -641,5 +645,32 @@ class RegressionRepairsTest {
 
         assertEquals(CallPhase.IDLE, callVm.uiState.value.phase)
         assertTrue(fake.updatedCallStatuses.contains("call_incoming_1" to "DECLINED"))
+    }
+
+    @Test
+    fun profileLoadFailure_setsProfileLoadErrorAndRetrySessionRecovers() = runTest {
+        val fake = FakeSogoDataSource(currentUid = "uid_me")
+        fake.profileObserverError = IllegalStateException("Transient Firestore error")
+
+        val vm = MainDashboardViewModel(app, fake)
+        val collectJob = backgroundScope.launch { vm.uiState.collect() }
+        advanceUntilIdle()
+
+        assertFalse(vm.uiState.value.hasResolvedProfile)
+        assertEquals("Transient Firestore error", vm.uiState.value.profileLoadError)
+        assertNull(vm.uiState.value.currentUserProfile)
+
+        // Recover via retrySession once error clears
+        val existing = UserProfile(userId = "uid_me", displayName = "Maria", age = 26)
+        fake.profileObserverError = null
+        fake.currentUserProfileFlow.value = existing
+        vm.retrySession("uid_me")
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.hasResolvedProfile)
+        assertNull(vm.uiState.value.profileLoadError)
+        assertEquals(existing, vm.uiState.value.currentUserProfile)
+
+        collectJob.cancel()
     }
 }

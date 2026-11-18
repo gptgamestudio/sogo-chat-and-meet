@@ -11,6 +11,7 @@ import com.example.data.repository.RecentLoginRequiredException
 import com.example.data.repository.SogoDataSource
 import com.example.data.repository.SogoRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +54,8 @@ data class DashboardUiState(
     val dashboardPreferences: DashboardPreferences = DashboardPreferences(),
     val blockedUserIds: Set<String> = emptySet(),
     val isLoading: Boolean = true,
+    val hasResolvedProfile: Boolean = false,
+    val profileLoadError: String? = null,
     val isPostingActivity: Boolean = false,
     val isSavingProfile: Boolean = false,
     val isDeletingAccount: Boolean = false,
@@ -73,6 +76,8 @@ private data class FilteredMembersSnapshot(
 
 private data class StatusFlags(
     val isLoading: Boolean,
+    val hasResolvedProfile: Boolean,
+    val profileLoadError: String?,
     val isPostingActivity: Boolean,
     val isSavingProfile: Boolean,
     val isDeletingAccount: Boolean,
@@ -106,6 +111,8 @@ class MainDashboardViewModel(
     private val _myActivityReactions = MutableStateFlow<Map<String, String>>(emptyMap())
     private val _dashboardPreferences = MutableStateFlow(DashboardPreferences())
     private val _isLoading = MutableStateFlow(true)
+    private val _hasResolvedProfile = MutableStateFlow(false)
+    private val _profileLoadError = MutableStateFlow<String?>(null)
     private val _isPostingActivity = MutableStateFlow(false)
     private val _isSavingProfile = MutableStateFlow(false)
     private val _isDeletingAccount = MutableStateFlow(false)
@@ -198,6 +205,13 @@ class MainDashboardViewModel(
         Triple(isLoading, isPostingActivity, isSavingProfile)
     }
 
+    private val _profileLoadFlags = combine(
+        _hasResolvedProfile,
+        _profileLoadError
+    ) { hasResolvedProfile, profileLoadError ->
+        hasResolvedProfile to profileLoadError
+    }
+
     private val _accountFlags = combine(
         _isDeletingAccount,
         _requiresReauthForDeletion,
@@ -208,10 +222,13 @@ class MainDashboardViewModel(
 
     private val _statusFlags = combine(
         _loadingFlags,
+        _profileLoadFlags,
         _accountFlags
-    ) { loading, account ->
+    ) { loading, profileLoad, account ->
         StatusFlags(
             isLoading = loading.first,
+            hasResolvedProfile = profileLoad.first,
+            profileLoadError = profileLoad.second,
             isPostingActivity = loading.second,
             isSavingProfile = loading.third,
             isDeletingAccount = account.first,
@@ -255,6 +272,8 @@ class MainDashboardViewModel(
             dashboardPreferences = activitySnapshot.preferences,
             blockedUserIds = membersData.blockedUserIds,
             isLoading = status.isLoading,
+            hasResolvedProfile = status.hasResolvedProfile,
+            profileLoadError = status.profileLoadError,
             isPostingActivity = status.isPostingActivity,
             isSavingProfile = status.isSavingProfile,
             isDeletingAccount = status.isDeletingAccount,
@@ -267,23 +286,57 @@ class MainDashboardViewModel(
         initialValue = DashboardUiState()
     )
 
+    private var activeObservedUid: String? = null
+    private var profileJob: Job? = null
+    private var blockedIdsJob: Job? = null
+    private var membersJob: Job? = null
+    private var friendRequestsJob: Job? = null
+    private var activityPostsJob: Job? = null
+    private var activityReactionsJob: Job? = null
+
     init {
         val uid = repository.getCurrentUserId()
         if (uid != null) {
-            loadUserData(uid)
-            observeRealtimeMembers()
-            observeRealtimeFriendRequests()
-            observeRealtimeActivities()
+            startSessionObservers(uid)
         } else {
             _isLoading.value = false
         }
     }
 
+    fun ensureSessionStarted(uid: String) {
+        if (activeObservedUid != uid || (profileJob?.isActive != true && _currentUserProfile.value == null)) {
+            startSessionObservers(uid)
+        }
+    }
+
+    fun retrySession(uid: String) {
+        startSessionObservers(uid, forceRestart = true)
+    }
+
+    private fun startSessionObservers(uid: String, forceRestart: Boolean = false) {
+        if (!forceRestart && activeObservedUid == uid && profileJob?.isActive == true) {
+            return
+        }
+        activeObservedUid = uid
+        _isLoading.value = true
+        _hasResolvedProfile.value = false
+        _profileLoadError.value = null
+        _errorMessage.value = null
+
+        loadUserData(uid)
+        observeRealtimeMembers()
+        observeRealtimeFriendRequests()
+        observeRealtimeActivities()
+    }
+
     private fun loadUserData(uid: String) {
-        viewModelScope.launch {
+        profileJob?.cancel()
+        profileJob = viewModelScope.launch {
             try {
                 repository.observeCurrentUserProfile(uid).collect { profile ->
                     _currentUserProfile.value = profile
+                    _hasResolvedProfile.value = true
+                    _profileLoadError.value = null
                     if (profile == null) {
                         _isLoading.value = false
                     }
@@ -292,11 +345,14 @@ class MainDashboardViewModel(
                 throw e
             } catch (e: Exception) {
                 _isLoading.value = false
-                _errorMessage.value = e.message ?: "Failed to load your profile."
+                val msg = e.message ?: "Failed to load your profile."
+                _profileLoadError.value = msg
+                _errorMessage.value = msg
             }
         }
 
-        viewModelScope.launch {
+        blockedIdsJob?.cancel()
+        blockedIdsJob = viewModelScope.launch {
             try {
                 repository.observeBlockedUserIds().collect { blocked ->
                     _blockedUserIds.value = blocked
@@ -310,7 +366,8 @@ class MainDashboardViewModel(
     }
 
     private fun observeRealtimeMembers() {
-        viewModelScope.launch {
+        membersJob?.cancel()
+        membersJob = viewModelScope.launch {
             try {
                 repository.observeMembers().collect { list ->
                     _rawMembers.value = list
@@ -326,7 +383,8 @@ class MainDashboardViewModel(
     }
 
     private fun observeRealtimeFriendRequests() {
-        viewModelScope.launch {
+        friendRequestsJob?.cancel()
+        friendRequestsJob = viewModelScope.launch {
             try {
                 repository.observeFriendRequests().collect { list ->
                     _friendRequests.value = list
@@ -340,7 +398,8 @@ class MainDashboardViewModel(
     }
 
     private fun observeRealtimeActivities() {
-        viewModelScope.launch {
+        activityPostsJob?.cancel()
+        activityPostsJob = viewModelScope.launch {
             try {
                 repository.observeActivityPosts().collect { posts ->
                     _rawActivityPosts.value = posts
@@ -352,7 +411,8 @@ class MainDashboardViewModel(
             }
         }
 
-        viewModelScope.launch {
+        activityReactionsJob?.cancel()
+        activityReactionsJob = viewModelScope.launch {
             try {
                 repository.observeMyActivityReactions().collect { reactions ->
                     _myActivityReactions.value = reactions
@@ -556,6 +616,8 @@ class MainDashboardViewModel(
                 )
                 repository.saveUserProfile(profile)
                 _currentUserProfile.value = profile
+                _hasResolvedProfile.value = true
+                _profileLoadError.value = null
                 onSuccess()
             } catch (e: CancellationException) {
                 throw e

@@ -18,6 +18,7 @@ import androidx.credentials.exceptions.CreateCredentialException
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialCustomException
 import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.GetCredentialInterruptedException
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.test.core.app.ApplicationProvider
 import com.example.R
@@ -209,5 +210,51 @@ class AuthComponentsTest {
         assertTrue(capturedError!!.contains("TEST_TYPE"))
         assertTrue(capturedError!!.contains("could not be completed", ignoreCase = true))
         assertFalse(capturedError!!.contains("Developer error 10"))
+    }
+
+    @Test
+    fun onGoogleSignInClicked_whenCancelledWithNonUserDetail_surfacesDetail() = runTest {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        val credentialManager = FakeFailingCredentialManager(
+            GetCredentialCancellationException("[28436] Caller configuration mismatch")
+        )
+        var capturedError: String? = null
+        var cancelledCalled = false
+
+        onGoogleSignInClicked(
+            context = activity,
+            credentialManager = credentialManager,
+            onAuthSuccess = {},
+            onAuthError = { capturedError = it },
+            scope = this,
+            onAuthCancelled = { cancelledCalled = true }
+        )
+        advanceUntilIdle()
+
+        assertTrue(cancelledCalled)
+        assertNotNull(capturedError)
+        assertTrue(capturedError!!.contains("28436"))
+        assertTrue(capturedError!!.contains("could not be completed", ignoreCase = true))
+    }
+
+    @Test
+    fun onGoogleSignInClicked_whenGetCredentialException_surfacesType() = runTest {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        val credentialManager = FakeFailingCredentialManager(
+            GetCredentialInterruptedException("Play Services interrupted")
+        )
+        var capturedError: String? = null
+
+        onGoogleSignInClicked(
+            context = activity,
+            credentialManager = credentialManager,
+            onAuthSuccess = {},
+            onAuthError = { capturedError = it },
+            scope = this
+        )
+        advanceUntilIdle()
+
+        assertNotNull(capturedError)
+        assertTrue(capturedError!!.contains("unavailable", ignoreCase = true))
     }
 }

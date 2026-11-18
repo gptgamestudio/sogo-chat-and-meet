@@ -202,6 +202,8 @@ private val AVATAR_PRESETS = listOf(
 @Composable
 fun MemberProfileSetupScreen(
     initialProfile: UserProfile? = null,
+    defaultDisplayName: String = "",
+    defaultPhotoUrl: String? = null,
     isSaving: Boolean = false,
     externalErrorMessage: String? = null,
     onDismissError: () -> Unit = {},
@@ -222,8 +224,12 @@ fun MemberProfileSetupScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var displayName by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.displayName ?: "") }
-    var photoUrl by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.photoUrl ?: AVATAR_PRESETS[0]) }
+    var displayName by remember(initialProfile?.userId, defaultDisplayName) {
+        mutableStateOf(initialProfile?.displayName ?: defaultDisplayName)
+    }
+    var photoUrl by remember(initialProfile?.userId, defaultPhotoUrl) {
+        mutableStateOf(initialProfile?.photoUrl ?: defaultPhotoUrl ?: AVATAR_PRESETS[0])
+    }
     var gender by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.gender ?: "Female") }
     var country by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.country ?: "Philippines") }
     var city by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.city ?: "Makati") }

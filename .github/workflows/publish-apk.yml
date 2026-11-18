@@ -89,17 +89,93 @@ jobs:
       - name: Prepare Android Keystore
         id: keystore
         env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          keytool -genkey -v -keystore debug.keystore -storepass android \
-            -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
-            -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-          if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
-            echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
-            echo "has_release=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_release=false" >> "$GITHUB_OUTPUT"
-          fi
+          python3 - <<'PY'
+          import base64, json, os, re, subprocess, sys
+
+          debug_b64 = os.environ.get("DEBUG_KEYSTORE_BASE64", "").strip()
+          release_b64 = os.environ.get("RELEASE_KEYSTORE_BASE64", "").strip()
+          store_pw = os.environ.get("STORE_PASSWORD", "")
+          key_pw = os.environ.get("KEY_PASSWORD", "")
+
+          if debug_b64:
+              try:
+                  raw_dbg = base64.b64decode(debug_b64, validate=True)
+              except Exception:
+                  print("ERROR: DEBUG_KEYSTORE_BASE64 is not valid Base64.", file=sys.stderr)
+                  sys.exit(1)
+              with open("debug.keystore", "wb") as f:
+                  f.write(raw_dbg)
+              os.chmod("debug.keystore", 0o600)
+              print("Restored debug.keystore from DEBUG_KEYSTORE_BASE64 secret.")
+          elif not os.path.isfile("debug.keystore"):
+              subprocess.run([
+                  "keytool", "-genkey", "-v", "-keystore", "debug.keystore",
+                  "-storepass", "android", "-alias", "androiddebugkey",
+                  "-keypass", "android", "-keyalg", "RSA", "-keysize", "2048",
+                  "-validity", "10000", "-dname", "CN=Android Debug,O=Android,C=US"
+              ], check=True)
+              print("Generated ephemeral debug.keystore (DEBUG_KEYSTORE_BASE64 secret not set).")
+
+          has_release = False
+          active_keystore = "debug.keystore"
+          active_alias = "androiddebugkey"
+          active_pw = "android"
+
+          if release_b64:
+              if not store_pw or not key_pw:
+                  print("ERROR: RELEASE_KEYSTORE_BASE64 is set but STORE_PASSWORD or KEY_PASSWORD secret is missing.", file=sys.stderr)
+                  sys.exit(1)
+              try:
+                  raw_rel = base64.b64decode(release_b64, validate=True)
+              except Exception:
+                  print("ERROR: RELEASE_KEYSTORE_BASE64 is not valid Base64.", file=sys.stderr)
+                  sys.exit(1)
+              with open("my-upload-key.jks", "wb") as f:
+                  f.write(raw_rel)
+              os.chmod("my-upload-key.jks", 0o600)
+              has_release = True
+              active_keystore = "my-upload-key.jks"
+              active_alias = "upload"
+              active_pw = store_pw
+              print("Restored release keystore for signed release build.")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"has_release={'true' if has_release else 'false'}\n")
+
+          # Check active signing SHA-1 against app/google-services.json so Google Sign-In works
+          kt = subprocess.run(
+              ["keytool", "-list", "-v", "-keystore", active_keystore, "-storepass", active_pw, "-alias", active_alias],
+              capture_output=True, text=True
+          )
+          m = re.search(r"SHA1:\s*([0-9A-Fa-f:]+)", kt.stdout)
+          if m:
+              sha1_colon = m.group(1).upper()
+              sha1_hex = sha1_colon.replace(":", "").lower()
+              print(f"Active APK signing SHA-1: {sha1_colon}")
+              with open("app/google-services.json", "r", encoding="utf-8") as f:
+                  gs = json.load(f)
+              registered = {
+                  o.get("android_info", {}).get("certificate_hash", "").lower()
+                  for c in gs.get("client", [])
+                  for o in c.get("oauth_client", [])
+                  if o.get("android_info", {}).get("certificate_hash")
+              }
+              if sha1_hex in registered:
+                  print("Signing SHA-1 is registered in app/google-services.json (Google Sign-In ready).")
+              else:
+                  print(
+                      f"::warning::Signing SHA-1 ({sha1_colon}) is NOT in app/google-services.json! "
+                      "Google Sign-In will fail with 'Sign-In was cancelled' unless you set DEBUG_KEYSTORE_BASE64 "
+                      "from debug.keystore.base64 OR register this SHA-1 in Firebase Console and update GOOGLE_SERVICES_JSON."
+                  )
+          else:
+              print("::warning::Could not inspect active keystore SHA-1 (check alias/password if release build).")
+          PY
 
       - name: Run Android Unit Tests
         run: gradle :app:testDebugUnitTest --tests '*AuthComponentsTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest'

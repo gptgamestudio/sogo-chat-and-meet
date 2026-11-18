@@ -68,6 +68,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialCustomException
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
 import com.example.data.model.UserProfile
@@ -125,6 +126,12 @@ fun attemptAutoSignIn(
         return
     }
 
+    val activity = context.findActivity()
+    if (activity == null) {
+        onUnauthenticated()
+        return
+    }
+
     val googleIdOption = GetGoogleIdOption.Builder()
         .setFilterByAuthorizedAccounts(true)
         .setServerClientId(clientId)
@@ -135,7 +142,7 @@ fun attemptAutoSignIn(
 
     scope.launch {
         try {
-            val result = credentialManager.getCredential(context, request)
+            val result = credentialManager.getCredential(activity, request)
             val credential = result.credential
             if (credential is CustomCredential &&
                 (credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL ||
@@ -144,8 +151,12 @@ fun attemptAutoSignIn(
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 if (googleIdToken.isNotBlank()) {
                     val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                    Firebase.auth.signInWithCredential(authCredential).await()
-                    onAuthSuccess()
+                    val authResult = Firebase.auth.signInWithCredential(authCredential).await()
+                    if (authResult.user != null || Firebase.auth.currentUser != null) {
+                        onAuthSuccess()
+                    } else {
+                        onUnauthenticated()
+                    }
                 } else {
                     onUnauthenticated()
                 }
@@ -228,19 +239,31 @@ fun onGoogleSignInClicked(
                     return@launch
                 }
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                firebaseAuthResult@ run {
-                    Firebase.auth.signInWithCredential(authCredential).await()
+                val authResult = Firebase.auth.signInWithCredential(authCredential).await()
+                if (authResult.user != null || Firebase.auth.currentUser != null) {
                     Log.d("Auth", "Firebase authentication succeeded")
+                    onAuthSuccess()
+                } else {
+                    Log.e("Auth", "Firebase authentication completed without a currentUser")
+                    onAuthError("Firebase Sign-In did not create an active session. Please try again.")
                 }
-                onAuthSuccess()
             } else {
                 val type = (credential as? CustomCredential)?.type ?: credential::class.java.simpleName
                 Log.e("Auth", "Unexpected credential type received: $type")
                 onAuthError("Unexpected credential type received: $type")
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.w("Auth", "Google Sign-In flow cancelled by user")
-            onAuthError("Sign-In was cancelled. Please tap Sign In with Google to try again.")
+            val detail = e.errorMessage?.toString()?.trim().orEmpty()
+            Log.w("Auth", "Google Sign-In flow cancelled/aborted: $detail")
+            val msg = if (detail.isBlank() ||
+                detail.contains("cancel", ignoreCase = true) ||
+                detail.contains("user", ignoreCase = true)
+            ) {
+                "Sign-In was cancelled. Please tap Sign In with Google to try again."
+            } else {
+                "Sign-In could not be completed ($detail). Please tap Sign In with Google to try again."
+            }
+            onAuthError(msg)
             onAuthCancelled()
         } catch (e: NoCredentialException) {
             Log.w("Auth", "No Google credentials available on device")
@@ -248,6 +271,9 @@ fun onGoogleSignInClicked(
         } catch (e: GetCredentialCustomException) {
             Log.e("Auth", "Google Sign-In custom error: type=${e.type}")
             onAuthError("Google Sign-In could not be completed [${e.type}]. Please try again.")
+        } catch (e: GetCredentialException) {
+            Log.e("Auth", "Google Sign-In CredentialManager error: type=${e.type}")
+            onAuthError("Google Sign-In unavailable [${e.type}]. Please verify Google Play Services and try again.")
         } catch (e: Exception) {
             Log.e("Auth", "Google Sign-In failed (${e::class.java.simpleName})")
             onAuthError("Google Sign-In failed. Please check your connection and try again.")
