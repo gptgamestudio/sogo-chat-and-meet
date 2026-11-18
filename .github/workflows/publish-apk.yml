@@ -21,6 +21,66 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Restore and verify app/google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, sys
+
+          raw = os.environ.get("GOOGLE_SERVICES_JSON", "").strip()
+          target = "app/google-services.json"
+
+          if raw:
+              if raw.startswith("{"):
+                  data_text = raw
+              else:
+                  try:
+                      data_text = base64.b64decode(raw, validate=True).decode("utf-8")
+                  except Exception:
+                      print("ERROR: GOOGLE_SERVICES_JSON secret is neither valid JSON nor valid Base64.", file=sys.stderr)
+                      sys.exit(1)
+              with open(target, "w", encoding="utf-8") as f:
+                  f.write(data_text.rstrip() + "\n")
+              os.chmod(target, 0o600)
+              print("Restored app/google-services.json from GOOGLE_SERVICES_JSON secret.")
+          elif os.path.isfile(target):
+              print("Using repository app/google-services.json (GOOGLE_SERVICES_JSON secret not set).")
+          else:
+              print("ERROR: app/google-services.json is missing and GOOGLE_SERVICES_JSON secret is not set.", file=sys.stderr)
+              sys.exit(1)
+
+          try:
+              with open(target, "r", encoding="utf-8") as f:
+                  cfg = json.load(f)
+          except Exception:
+              print("ERROR: app/google-services.json is not valid JSON.", file=sys.stderr)
+              sys.exit(1)
+
+          project_id = cfg.get("project_info", {}).get("project_id", "")
+          clients = cfg.get("client", [])
+          pkg_ok = any(
+              c.get("client_info", {}).get("android_client_info", {}).get("package_name") == "com.sogo.chatandmeet"
+              for c in clients
+          )
+          web_client_ok = any(
+              any(o.get("client_type") == 3 for o in c.get("oauth_client", []))
+              for c in clients
+          )
+
+          if not project_id:
+              print("ERROR: Missing project_info.project_id in app/google-services.json.", file=sys.stderr)
+              sys.exit(1)
+          if not pkg_ok:
+              print("ERROR: app/google-services.json does not contain package com.sogo.chatandmeet.", file=sys.stderr)
+              sys.exit(1)
+          if not web_client_ok:
+              print("ERROR: Missing Web OAuth client (client_type 3) needed to generate default_web_client_id.", file=sys.stderr)
+              sys.exit(1)
+
+          print("Verified app/google-services.json for com.sogo.chatandmeet (Web OAuth client present).")
+          PY
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -41,12 +101,14 @@ jobs:
             echo "has_release=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Run Android Unit Tests
+        run: gradle :app:testDebugUnitTest --tests '*AuthComponentsTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest'
+
       - name: Build Signed Release APK (when release keystore secrets exist)
         if: steps.keystore.outputs.has_release == 'true'
         env:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
         run: |
           gradle :app:assembleRelease
           cp app/build/outputs/apk/release/app-release.apk SOGO-CHAT-AND-MEET.apk
