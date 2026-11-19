@@ -22,6 +22,9 @@ import androidx.credentials.exceptions.GetCredentialInterruptedException
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.test.core.app.ApplicationProvider
 import com.example.R
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
+import com.google.firebase.FirebaseNetworkException
+import com.google.firebase.auth.FirebaseAuthException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -256,5 +259,113 @@ class AuthComponentsTest {
 
         assertNotNull(capturedError)
         assertTrue(capturedError!!.contains("unavailable", ignoreCase = true))
+    }
+
+    @Test
+    fun onGoogleSignInClicked_whenBlankCancellation_invokesCancelledWithoutFalseConfirmedUserMessage() = runTest {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        val credentialManager = FakeFailingCredentialManager(
+            GetCredentialCancellationException("")
+        )
+        var capturedError: String? = null
+        var cancelledCalled = false
+
+        onGoogleSignInClicked(
+            context = activity,
+            credentialManager = credentialManager,
+            onAuthSuccess = {},
+            onAuthError = { capturedError = it },
+            scope = this,
+            onAuthCancelled = { cancelledCalled = true }
+        )
+        advanceUntilIdle()
+
+        assertTrue(cancelledCalled)
+        assertNotNull(capturedError)
+        assertTrue(capturedError!!.contains("did not complete", ignoreCase = true))
+        assertTrue(capturedError!!.contains("OAuth configuration", ignoreCase = true))
+    }
+
+    @Test
+    fun mapGoogleAuthFailure_distinguishesConfirmedUserCancelFromBlankCancellation() {
+        val confirmed = mapGoogleAuthFailure(
+            GetCredentialCancellationException("Activity is cancelled by the user.")
+        )
+        assertTrue(confirmed.isConfirmedUserCancel)
+        assertEquals(
+            "Sign-In was cancelled. Please tap Sign In with Google to try again.",
+            confirmed.userMessage
+        )
+
+        val ambiguous = mapGoogleAuthFailure(GetCredentialCancellationException(""))
+        assertFalse(ambiguous.isConfirmedUserCancel)
+        assertTrue(ambiguous.userMessage.contains("did not complete"))
+    }
+
+    @Test
+    fun mapGoogleAuthFailure_googleIdTokenParsingException_avoidsConnectionMisattribution() {
+        val failure = mapGoogleAuthFailure(GoogleIdTokenParsingException(IllegalArgumentException("bad jwt")))
+        assertTrue(failure.userMessage.contains("invalid credential format", ignoreCase = true))
+        assertFalse(failure.userMessage.contains("connection", ignoreCase = true))
+        assertFalse(failure.logMessage.contains("bad jwt"))
+    }
+
+    @Test
+    fun mapGoogleAuthFailure_firebaseAuthException_surfacesErrorCodeWithoutBlamingNetwork() {
+        val disabledProvider = mapGoogleAuthFailure(
+            FirebaseAuthException("ERROR_OPERATION_NOT_ALLOWED", "secret-internal-detail")
+        )
+        assertTrue(disabledProvider.userMessage.contains("ERROR_OPERATION_NOT_ALLOWED"))
+        assertTrue(disabledProvider.userMessage.contains("not enabled", ignoreCase = true))
+        assertFalse(disabledProvider.userMessage.contains("connection", ignoreCase = true))
+        assertFalse(disabledProvider.userMessage.contains("secret-internal-detail"))
+        assertFalse(disabledProvider.logMessage.contains("secret-internal-detail"))
+
+        val invalidCred = mapGoogleAuthFailure(
+            FirebaseAuthException("ERROR_INVALID_CREDENTIAL", "raw-token-detail")
+        )
+        assertTrue(invalidCred.userMessage.contains("ERROR_INVALID_CREDENTIAL"))
+        assertTrue(invalidCred.userMessage.contains("OAuth/SHA", ignoreCase = true))
+        assertFalse(invalidCred.logMessage.contains("raw-token-detail"))
+    }
+
+    @Test
+    fun mapGoogleAuthFailure_firebaseNetworkException_reportsNetworkError() {
+        val failure = mapGoogleAuthFailure(FirebaseNetworkException("network timeout"))
+        assertTrue(failure.userMessage.contains("internet connection", ignoreCase = true))
+    }
+
+    @Test
+    fun mapGoogleAuthFailure_unexpectedException_doesNotLeakArbitraryMessageOrBlameNetwork() {
+        val failure = mapGoogleAuthFailure(IllegalStateException("idToken=eyJhbGciOiJSUzI1NiJ9"))
+        assertTrue(failure.userMessage.contains("IllegalStateException"))
+        assertFalse(failure.userMessage.contains("eyJhbGciOiJSUzI1NiJ9"))
+        assertFalse(failure.logMessage.contains("eyJhbGciOiJSUzI1NiJ9"))
+        assertFalse(failure.userMessage.contains("connection", ignoreCase = true))
+    }
+
+    @Test
+    fun requestGoogleIdToken_translatesCredentialExceptionsConsistently() = runTest {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+
+        val noCredCm = FakeFailingCredentialManager(NoCredentialException("none"))
+        var noCredErr: String? = null
+        try {
+            requestGoogleIdToken(activity, noCredCm)
+        } catch (e: IllegalStateException) {
+            noCredErr = e.message
+        }
+        assertNotNull(noCredErr)
+        assertTrue(noCredErr!!.contains("No Google account is available"))
+
+        val blankCancelCm = FakeFailingCredentialManager(GetCredentialCancellationException(""))
+        var blankCancelErr: String? = null
+        try {
+            requestGoogleIdToken(activity, blankCancelCm)
+        } catch (e: IllegalStateException) {
+            blankCancelErr = e.message
+        }
+        assertNotNull(blankCancelErr)
+        assertTrue(blankCancelErr!!.contains("Google verification did not complete"))
     }
 }

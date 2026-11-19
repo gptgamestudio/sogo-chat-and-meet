@@ -113,6 +113,7 @@ import com.example.ui.theme.OutlineSubtle
 import com.example.ui.theme.TextDim
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextWhite
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -228,6 +229,8 @@ fun MainDashboardScreen(
                                             signOut(credentialManager, coroutineScope, onSignOut)
                                         }
                                     )
+                                } catch (e: CancellationException) {
+                                    throw e
                                 } catch (e: Exception) {
                                     viewModel.reportError(
                                         e.message ?: "Google reauthentication failed. Your profile was preserved."

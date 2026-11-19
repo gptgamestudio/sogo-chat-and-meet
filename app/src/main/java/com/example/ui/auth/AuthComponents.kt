@@ -90,9 +90,13 @@ import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_SIWG_CREDENTIAL
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseNetworkException
+import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -106,6 +110,122 @@ tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+internal data class GoogleAuthFailure(
+    val userMessage: String,
+    val logMessage: String,
+    val isWarning: Boolean = false,
+    val isConfirmedUserCancel: Boolean = false
+)
+
+internal fun mapGoogleAuthFailure(
+    error: Throwable,
+    forReauth: Boolean = false
+): GoogleAuthFailure {
+    val flowLabel = if (forReauth) "Google verification" else "Sign-In"
+    val retryHint = if (forReauth) "Please try again." else "Please tap Sign In with Google to try again."
+
+    return when (error) {
+        is GetCredentialCancellationException -> {
+            val rawDetail = error.errorMessage?.toString()?.trim()
+                ?.takeUnless { it.isBlank() }
+                ?: error.message?.trim().orEmpty()
+            val confirmedUserCancel =
+                rawDetail.contains("cancelled by the user", ignoreCase = true) ||
+                rawDetail.contains("canceled by the user", ignoreCase = true) ||
+                rawDetail.contains("user cancel", ignoreCase = true) ||
+                rawDetail.contains("user_cancelled", ignoreCase = true) ||
+                rawDetail.contains("dismissed by user", ignoreCase = true)
+
+            when {
+                confirmedUserCancel -> GoogleAuthFailure(
+                    userMessage = "$flowLabel was cancelled. $retryHint",
+                    logMessage = "Credential flow cancelled by user [type=${error.type}]",
+                    isWarning = true,
+                    isConfirmedUserCancel = true
+                )
+                rawDetail.isBlank() -> GoogleAuthFailure(
+                    userMessage = "$flowLabel did not complete [${error.type}]. This may be caused by user dismissal or an app/OAuth configuration issue. $retryHint",
+                    logMessage = "Credential flow aborted with empty detail [type=${error.type}, reauth=$forReauth]",
+                    isWarning = true,
+                    isConfirmedUserCancel = false
+                )
+                else -> GoogleAuthFailure(
+                    userMessage = "$flowLabel could not be completed ($rawDetail). $retryHint",
+                    logMessage = "Credential flow aborted with non-user detail [type=${error.type}, reauth=$forReauth]",
+                    isWarning = true,
+                    isConfirmedUserCancel = false
+                )
+            }
+        }
+        is NoCredentialException -> GoogleAuthFailure(
+            userMessage = if (forReauth) {
+                "No Google account is available on this device for verification. Add a Google account in Settings and try again."
+            } else {
+                "No Google account is available on this device. Add a Google account in Settings and try again."
+            },
+            logMessage = "No Google credentials available [type=${error.type}, reauth=$forReauth]",
+            isWarning = true
+        )
+        is GetCredentialCustomException -> GoogleAuthFailure(
+            userMessage = "Google $flowLabel could not be completed [${error.type}]. Please try again.",
+            logMessage = "Google $flowLabel custom credential error [type=${error.type}]",
+            isWarning = false
+        )
+        is GetCredentialException -> GoogleAuthFailure(
+            userMessage = "Google $flowLabel unavailable [${error.type}]. Please verify Google Play Services and try again.",
+            logMessage = "CredentialManager error [type=${error.type}, class=${error::class.java.simpleName}]",
+            isWarning = false
+        )
+        is GoogleIdTokenParsingException -> GoogleAuthFailure(
+            userMessage = "Google $flowLabel returned an invalid credential format. Please try again.",
+            logMessage = "GoogleIdTokenCredential parsing failed [class=${error::class.java.simpleName}]",
+            isWarning = false
+        )
+        is FirebaseAuthException -> {
+            val code = error.errorCode
+            val msg = when (code) {
+                "ERROR_OPERATION_NOT_ALLOWED" ->
+                    "Google Sign-In is not enabled in Firebase Authentication settings [$code]."
+                "ERROR_INVALID_CREDENTIAL",
+                "ERROR_INVALID_OAUTH_CLIENT_ID" ->
+                    "Google credential was rejected by Firebase Authentication [$code]. Verify OAuth/SHA configuration."
+                "ERROR_USER_DISABLED" ->
+                    "This Google account has been disabled [$code]."
+                "ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL" ->
+                    "An account already exists with a different sign-in method [$code]."
+                "ERROR_TOO_MANY_REQUESTS" ->
+                    "Too many authentication attempts [$code]. Please wait a moment and try again."
+                else ->
+                    "Firebase Authentication failed [$code]. Please try again."
+            }
+            GoogleAuthFailure(
+                userMessage = msg,
+                logMessage = "FirebaseAuthException [errorCode=$code, reauth=$forReauth]",
+                isWarning = false
+            )
+        }
+        is FirebaseNetworkException -> GoogleAuthFailure(
+            userMessage = "Network error while contacting Google/Firebase. Please check your internet connection and try again.",
+            logMessage = "FirebaseNetworkException during $flowLabel",
+            isWarning = true
+        )
+        else -> GoogleAuthFailure(
+            userMessage = "Google $flowLabel failed (${error::class.java.simpleName}). Please try again.",
+            logMessage = "Unexpected $flowLabel failure [class=${error::class.java.simpleName}]",
+            isWarning = false
+        )
+    }
+}
+
+private fun logAuthFailure(prefix: String, failure: GoogleAuthFailure) {
+    val line = "$prefix: ${failure.logMessage}"
+    if (failure.isWarning) {
+        Log.w("Auth", line)
+    } else {
+        Log.e("Auth", line)
+    }
 }
 
 fun attemptAutoSignIn(
@@ -122,12 +242,14 @@ fun attemptAutoSignIn(
     val clientId = try {
         context.getString(R.string.default_web_client_id)
     } catch (e: Exception) {
+        Log.w("Auth", "Auto sign-in skipped: default_web_client_id resource unavailable")
         onUnauthenticated()
         return
     }
 
     val activity = context.findActivity()
     if (activity == null) {
+        Log.w("Auth", "Auto sign-in skipped: Activity context unavailable")
         onUnauthenticated()
         return
     }
@@ -155,18 +277,39 @@ fun attemptAutoSignIn(
                     if (authResult.user != null || Firebase.auth.currentUser != null) {
                         onAuthSuccess()
                     } else {
+                        Log.w("Auth", "Auto sign-in completed without an active Firebase user")
                         onUnauthenticated()
                     }
                 } else {
+                    Log.w("Auth", "Auto sign-in returned an empty ID token")
                     onUnauthenticated()
                 }
             } else {
+                Log.w("Auth", "Auto sign-in returned non-Google credential type")
                 onUnauthenticated()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: NoCredentialException) {
             Log.d("Auth", "No auto sign-in credentials available")
             onUnauthenticated()
+        } catch (e: GetCredentialCancellationException) {
+            logAuthFailure("Auto sign-in aborted", mapGoogleAuthFailure(e))
+            onUnauthenticated()
+        } catch (e: GoogleIdTokenParsingException) {
+            logAuthFailure("Auto sign-in token parse error", mapGoogleAuthFailure(e))
+            onUnauthenticated()
+        } catch (e: GetCredentialException) {
+            logAuthFailure("Auto sign-in credential error", mapGoogleAuthFailure(e))
+            onUnauthenticated()
+        } catch (e: FirebaseAuthException) {
+            logAuthFailure("Auto sign-in Firebase Auth error", mapGoogleAuthFailure(e))
+            onUnauthenticated()
+        } catch (e: FirebaseNetworkException) {
+            logAuthFailure("Auto sign-in network error", mapGoogleAuthFailure(e))
+            onUnauthenticated()
         } catch (e: Exception) {
+            logAuthFailure("Auto sign-in unexpected error", mapGoogleAuthFailure(e))
             onUnauthenticated()
         }
     }
@@ -186,19 +329,30 @@ suspend fun requestGoogleIdToken(
 
     val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
     val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
-    val result = credentialManager.getCredential(activity, request)
-    val credential = result.credential
-    if (credential is CustomCredential &&
-        (credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL ||
-         credential.type == TYPE_GOOGLE_ID_TOKEN_SIWG_CREDENTIAL)
-    ) {
-        val idToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-        if (idToken.isBlank()) {
-            throw IllegalStateException("Google verification returned an empty ID token.")
+    return try {
+        val result = credentialManager.getCredential(activity, request)
+        val credential = result.credential
+        if (credential is CustomCredential &&
+            (credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL ||
+             credential.type == TYPE_GOOGLE_ID_TOKEN_SIWG_CREDENTIAL)
+        ) {
+            val idToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+            if (idToken.isBlank()) {
+                throw IllegalStateException("Google verification returned an empty ID token.")
+            }
+            idToken
+        } else {
+            throw IllegalStateException("Unexpected credential type received during verification.")
         }
-        return idToken
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: IllegalStateException) {
+        throw e
+    } catch (e: Exception) {
+        val failure = mapGoogleAuthFailure(e, forReauth = true)
+        logAuthFailure("Google re-authentication failed", failure)
+        throw IllegalStateException(failure.userMessage, e)
     }
-    throw IllegalStateException("Unexpected credential type received during verification.")
 }
 
 fun onGoogleSignInClicked(
@@ -235,6 +389,7 @@ fun onGoogleSignInClicked(
             ) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 if (googleIdToken.isBlank()) {
+                    Log.e("Auth", "Interactive sign-in received an empty Google ID token")
                     onAuthError("Google ID token received was empty. Please check Google Sign-In setup.")
                     return@launch
                 }
@@ -249,34 +404,44 @@ fun onGoogleSignInClicked(
                 }
             } else {
                 val type = (credential as? CustomCredential)?.type ?: credential::class.java.simpleName
-                Log.e("Auth", "Unexpected credential type received: $type")
+                Log.e("Auth", "Unexpected credential type received [class=${credential::class.java.simpleName}]")
                 onAuthError("Unexpected credential type received: $type")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: GetCredentialCancellationException) {
-            val detail = e.errorMessage?.toString()?.trim().orEmpty()
-            Log.w("Auth", "Google Sign-In flow cancelled/aborted: $detail")
-            val msg = if (detail.isBlank() ||
-                detail.contains("cancel", ignoreCase = true) ||
-                detail.contains("user", ignoreCase = true)
-            ) {
-                "Sign-In was cancelled. Please tap Sign In with Google to try again."
-            } else {
-                "Sign-In could not be completed ($detail). Please tap Sign In with Google to try again."
-            }
-            onAuthError(msg)
+            val failure = mapGoogleAuthFailure(e)
+            logAuthFailure("Interactive Google Sign-In aborted", failure)
+            onAuthError(failure.userMessage)
             onAuthCancelled()
         } catch (e: NoCredentialException) {
-            Log.w("Auth", "No Google credentials available on device")
-            onAuthError("No Google account is available on this device. Add a Google account in Settings and try again.")
+            val failure = mapGoogleAuthFailure(e)
+            logAuthFailure("Interactive Google Sign-In failed", failure)
+            onAuthError(failure.userMessage)
         } catch (e: GetCredentialCustomException) {
-            Log.e("Auth", "Google Sign-In custom error: type=${e.type}")
-            onAuthError("Google Sign-In could not be completed [${e.type}]. Please try again.")
+            val failure = mapGoogleAuthFailure(e)
+            logAuthFailure("Interactive Google Sign-In failed", failure)
+            onAuthError(failure.userMessage)
         } catch (e: GetCredentialException) {
-            Log.e("Auth", "Google Sign-In CredentialManager error: type=${e.type}")
-            onAuthError("Google Sign-In unavailable [${e.type}]. Please verify Google Play Services and try again.")
+            val failure = mapGoogleAuthFailure(e)
+            logAuthFailure("Interactive Google Sign-In failed", failure)
+            onAuthError(failure.userMessage)
+        } catch (e: GoogleIdTokenParsingException) {
+            val failure = mapGoogleAuthFailure(e)
+            logAuthFailure("Interactive Google Sign-In failed", failure)
+            onAuthError(failure.userMessage)
+        } catch (e: FirebaseAuthException) {
+            val failure = mapGoogleAuthFailure(e)
+            logAuthFailure("Interactive Google Sign-In failed", failure)
+            onAuthError(failure.userMessage)
+        } catch (e: FirebaseNetworkException) {
+            val failure = mapGoogleAuthFailure(e)
+            logAuthFailure("Interactive Google Sign-In failed", failure)
+            onAuthError(failure.userMessage)
         } catch (e: Exception) {
-            Log.e("Auth", "Google Sign-In failed (${e::class.java.simpleName})")
-            onAuthError("Google Sign-In failed. Please check your connection and try again.")
+            val failure = mapGoogleAuthFailure(e)
+            logAuthFailure("Interactive Google Sign-In failed", failure)
+            onAuthError(failure.userMessage)
         }
     }
 }
@@ -307,16 +472,24 @@ fun AuthScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
-    var isLoading by remember { mutableStateOf(false) }
+    var isAutoChecking by remember { mutableStateOf(true) }
+    var isManualSigningIn by remember { mutableStateOf(false) }
+    var statusLabel by remember { mutableStateOf("Checking existing Google session...") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    val isValidating = isAutoChecking || isManualSigningIn
 
     // Attempt silent auto-sign-in on initial launch
     LaunchedEffect(Unit) {
         attemptAutoSignIn(
             context = context,
             credentialManager = credentialManager,
-            onAuthSuccess = onAuthSuccess,
-            onUnauthenticated = { /* Keep showing login screen */ },
+            onAuthSuccess = {
+                statusLabel = "Sign-In verified. Navigating to dashboard..."
+                onAuthSuccess()
+            },
+            onUnauthenticated = {
+                isAutoChecking = false
+            },
             scope = coroutineScope
         )
     }
@@ -458,25 +631,35 @@ fun AuthScreen(
                 }
             }
 
+            if (isValidating) {
+                AuthValidatingCard(
+                    statusLabel = statusLabel,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+            }
+
             // Google Sign-In Button
             Button(
                 onClick = {
-                    isLoading = true
+                    isAutoChecking = false
+                    isManualSigningIn = true
+                    statusLabel = "Validating Google Sign-In..."
                     errorMessage = null
                     onGoogleSignInClicked(
                         context = context,
                         credentialManager = credentialManager,
                         onAuthSuccess = {
-                            isLoading = false
+                            // Keep validating spinner active until MainActivity transitions to dashboard
+                            statusLabel = "Sign-In verified. Navigating to dashboard..."
                             onAuthSuccess()
                         },
                         onAuthError = { err ->
-                            isLoading = false
+                            isManualSigningIn = false
                             errorMessage = err
                         },
                         scope = coroutineScope,
                         onAuthCancelled = {
-                            isLoading = false
+                            isManualSigningIn = false
                         }
                     )
                 },
@@ -487,19 +670,30 @@ fun AuthScreen(
                 shape = RoundedCornerShape(28.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = BurgundyPrimary,
-                    contentColor = TextWhite
+                    contentColor = TextWhite,
+                    disabledContainerColor = BurgundyDark,
+                    disabledContentColor = TextWhite
                 ),
-                border = ButtonDefaults.outlinedButtonBorder.copy(
+                border = ButtonDefaults.outlinedButtonBorder(enabled = !isValidating).copy(
                     brush = Brush.horizontalGradient(listOf(GoldAccent, GoldLight))
                 ),
-                enabled = !isLoading
+                enabled = !isValidating
             ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = GoldLight,
-                        strokeWidth = 2.dp
-                    )
+                if (isValidating) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = GoldLight,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Signing In...",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = GoldLight
+                        )
+                    }
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -527,6 +721,46 @@ fun AuthScreen(
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
                 lineHeight = 14.sp
+            )
+        }
+    }
+}
+
+@Composable
+fun AuthValidatingCard(
+    statusLabel: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("auth_validating_card"),
+        colors = CardDefaults.cardColors(containerColor = MatteBlackCard),
+        shape = RoundedCornerShape(16.dp),
+        border = CardDefaults.outlinedCardBorder().copy(
+            brush = Brush.horizontalGradient(listOf(GoldAccent, OutlineSubtle))
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .size(24.dp)
+                    .testTag("auth_validating_progress"),
+                color = GoldLight,
+                strokeWidth = 2.5.dp
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = statusLabel,
+                color = TextWhite,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
             )
         }
     }

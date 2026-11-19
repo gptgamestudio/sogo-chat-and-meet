@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -181,7 +182,9 @@ fun PostLoginFlow(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(
                         color = PhilippineGold,
-                        modifier = Modifier.size(44.dp)
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("dashboard_loading_progress")
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
@@ -193,7 +196,7 @@ fun PostLoginFlow(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Connecting to secure member network...",
+                        text = "Validating account & opening dashboard...",
                         color = SecondaryMuted,
                         fontSize = 12.sp
                     )
