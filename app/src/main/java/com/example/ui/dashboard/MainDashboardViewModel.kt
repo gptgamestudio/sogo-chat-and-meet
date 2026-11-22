@@ -602,17 +602,18 @@ class MainDashboardViewModel(
             try {
                 val profile = UserProfile(
                     userId = uid,
-                    displayName = displayName.trim(),
-                    birthday = birthday,
+                    displayName = displayName.trim().ifBlank { "Member" }.take(50),
+                    birthday = birthday.trim().take(30),
                     age = age,
-                    gender = gender,
-                    country = country,
-                    city = city.trim().takeIf { it.isNotBlank() } ?: "Manila",
-                    photoUrl = photoUrl,
-                    aboutMe = aboutMe.trim(),
-                    personality = personality,
-                    interests = interests,
-                    isOnline = true
+                    gender = gender.trim().ifBlank { "Female" }.take(30),
+                    country = country.trim().ifBlank { "Philippines" }.take(60),
+                    city = city.trim().takeIf { it.isNotBlank() }?.take(60) ?: "Manila",
+                    photoUrl = photoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 },
+                    aboutMe = aboutMe.trim().take(1000),
+                    personality = personality.trim().takeIf { it.isNotBlank() }?.take(100),
+                    interests = interests.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(25),
+                    isOnline = true,
+                    role = "member"
                 )
                 repository.saveUserProfile(profile)
                 _currentUserProfile.value = profile

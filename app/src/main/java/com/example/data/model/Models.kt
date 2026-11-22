@@ -1,10 +1,13 @@
 package com.example.data.model
 
+import androidx.annotation.Keep
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
 
+@Keep
 @IgnoreExtraProperties
 data class UserProfile(
     @DocumentId val id: String = "",
@@ -19,6 +22,7 @@ data class UserProfile(
     val aboutMe: String? = "",
     val personality: String? = null,
     val interests: List<String> = emptyList(),
+    @get:PropertyName("isOnline") @field:PropertyName("isOnline")
     val isOnline: Boolean = false,
     val role: String = "member",
     @ServerTimestamp val lastActive: Timestamp? = null,
@@ -26,15 +30,18 @@ data class UserProfile(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class UserPresence(
     @DocumentId val id: String = "",
     val userId: String = "",
+    @get:PropertyName("isOnline") @field:PropertyName("isOnline")
     val isOnline: Boolean = false,
     @ServerTimestamp val lastSeen: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class Conversation(
     @DocumentId val id: String = "",
@@ -47,6 +54,7 @@ data class Conversation(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class ChatMessage(
     @DocumentId val id: String = "",
@@ -58,11 +66,13 @@ data class ChatMessage(
     val content: String = "",
     val type: String = "TEXT", // "TEXT", "IMAGE", "VOICE", "STICKER"
     val mediaUrl: String? = null,
+    @get:PropertyName("isRead") @field:PropertyName("isRead")
     val isRead: Boolean = false,
     val reactions: Map<String, String> = emptyMap(),
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class BlockRecord(
     @DocumentId val id: String = "",
@@ -72,6 +82,7 @@ data class BlockRecord(
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class ReportRecord(
     @DocumentId val id: String = "",
@@ -84,6 +95,7 @@ data class ReportRecord(
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class NotificationRecord(
     @DocumentId val id: String = "",
@@ -93,6 +105,7 @@ data class NotificationRecord(
     val body: String = "",
     val type: String = "CHAT_MESSAGE",
     val data: String? = null,
+    @get:PropertyName("isRead") @field:PropertyName("isRead")
     val isRead: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null
 )
@@ -104,6 +117,7 @@ enum class FriendStatus {
     FRIENDS
 }
 
+@Keep
 @IgnoreExtraProperties
 data class FriendRequest(
     @DocumentId val id: String = "",
@@ -116,6 +130,7 @@ data class FriendRequest(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class CallSession(
     @DocumentId val id: String = "",
@@ -135,6 +150,7 @@ data class CallSession(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class IceCandidateRecord(
     @DocumentId val id: String = "",
@@ -147,6 +163,7 @@ data class IceCandidateRecord(
     @ServerTimestamp val createdAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class ActivityPost(
     @DocumentId val id: String = "",
@@ -164,6 +181,7 @@ data class ActivityPost(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+@Keep
 @IgnoreExtraProperties
 data class ActivityReaction(
     @DocumentId val id: String = "",

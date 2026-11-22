@@ -225,14 +225,17 @@ fun MemberProfileSetupScreen(
     val coroutineScope = rememberCoroutineScope()
 
     var displayName by remember(initialProfile?.userId, defaultDisplayName) {
-        mutableStateOf(initialProfile?.displayName ?: defaultDisplayName)
+        mutableStateOf((initialProfile?.displayName ?: defaultDisplayName).take(50))
     }
     var photoUrl by remember(initialProfile?.userId, defaultPhotoUrl) {
-        mutableStateOf(initialProfile?.photoUrl ?: defaultPhotoUrl ?: AVATAR_PRESETS[0])
+        val candidatePhoto = initialProfile?.photoUrl ?: defaultPhotoUrl
+        mutableStateOf(
+            candidatePhoto?.takeIf { it.isNotBlank() && it.length <= 65000 } ?: AVATAR_PRESETS[0]
+        )
     }
-    var gender by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.gender ?: "Female") }
-    var country by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.country ?: "Philippines") }
-    var city by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.city ?: "Makati") }
+    var gender by remember(initialProfile?.userId) { mutableStateOf((initialProfile?.gender ?: "Female").take(30)) }
+    var country by remember(initialProfile?.userId) { mutableStateOf((initialProfile?.country ?: "Philippines").take(60)) }
+    var city by remember(initialProfile?.userId) { mutableStateOf((initialProfile?.city ?: "Makati").take(60)) }
     var aboutMe by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.aboutMe ?: "") }
     var selectedPersonality by remember(initialProfile?.userId) {
         mutableStateOf(initialProfile?.personality ?: PERSONALITY_OPTIONS[0])
@@ -487,11 +490,20 @@ fun MemberProfileSetupScreen(
             // Display Name
             OutlinedTextField(
                 value = displayName,
-                onValueChange = { displayName = it },
+                onValueChange = { if (it.length <= 50) displayName = it },
                 label = { Text("Display Name") },
                 placeholder = { Text("e.g., Maya Morales") },
                 leadingIcon = {
                     Icon(Icons.Default.Person, contentDescription = null, tint = PhilippineGold)
+                },
+                supportingText = {
+                    Text(
+                        text = "${displayName.length}/50",
+                        color = SecondaryMuted,
+                        fontSize = 11.sp,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.End
+                    )
                 },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
@@ -667,8 +679,9 @@ fun MemberProfileSetupScreen(
             ) {
                 OutlinedTextField(
                     value = country,
-                    onValueChange = { country = it },
+                    onValueChange = { if (it.length <= 60) country = it },
                     label = { Text("Country") },
+                    singleLine = true,
                     leadingIcon = {
                         Icon(Icons.Default.LocationOn, contentDescription = null, tint = PhilippineGold)
                     },
@@ -686,9 +699,10 @@ fun MemberProfileSetupScreen(
 
                 OutlinedTextField(
                     value = city,
-                    onValueChange = { city = it },
+                    onValueChange = { if (it.length <= 60) city = it },
                     label = { Text("City (Optional)") },
                     placeholder = { Text("e.g. Makati") },
+                    singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = PhilippineGold,
                         unfocusedBorderColor = Color.DarkGray,

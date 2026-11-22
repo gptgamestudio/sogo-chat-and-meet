@@ -6,12 +6,9 @@ import android.content.ContextWrapper
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,7 +22,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
@@ -34,17 +30,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,8 +50,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
@@ -71,16 +59,12 @@ import androidx.credentials.exceptions.GetCredentialCustomException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
-import com.example.data.model.UserProfile
 import com.example.ui.theme.BurgundyDark
 import com.example.ui.theme.BurgundyLight
 import com.example.ui.theme.BurgundyPrimary
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.GoldLight
-import com.example.ui.theme.MatteBlackBackground
 import com.example.ui.theme.MatteBlackCard
-import com.example.ui.theme.MatteBlackSurface
-import com.example.ui.theme.MatteBlackSurfaceVariant
 import com.example.ui.theme.OutlineGold
 import com.example.ui.theme.OutlineSubtle
 import com.example.ui.theme.TextMuted
@@ -762,238 +746,6 @@ fun AuthValidatingCard(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
             )
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun ProfileSetupDialog(
-    initialDisplayName: String,
-    onSaveProfile: (displayName: String, age: Int, gender: String, country: String, city: String, aboutMe: String, interests: List<String>) -> Unit
-) {
-    var displayName by remember { mutableStateOf(initialDisplayName.ifBlank { "Filipino Single" }) }
-    var ageText by remember { mutableStateOf("24") }
-    var gender by remember { mutableStateOf("Female") }
-    var country by remember { mutableStateOf("Philippines") }
-    var city by remember { mutableStateOf("Manila") }
-    var aboutMe by remember { mutableStateOf("Friendly and down to earth. Looking for meaningful conversations and genuine connections.") }
-    var errorText by remember { mutableStateOf<String?>(null) }
-
-    val allInterests = listOf(
-        "Coffee & Kape", "Travel", "Beach", "Foodie", "Music & OPM", "Karaoke",
-        "Movies", "Fitness", "Nightlife", "Gaming", "Art", "Cooking"
-    )
-    val selectedInterests = remember { mutableStateOf(setOf("Coffee & Kape", "Travel", "Music & OPM")) }
-
-    Dialog(
-        onDismissRequest = { /* Modal forces completion */ },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            shape = RoundedCornerShape(24.dp),
-            color = MatteBlackSurface,
-            border = CardDefaults.outlinedCardBorder().copy(brush = Brush.verticalGradient(listOf(OutlineGold, OutlineSubtle)))
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Welcome to SOGO CHAT",
-                    color = GoldLight,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Complete your 18+ dating profile",
-                    color = TextMuted,
-                    fontSize = 13.sp
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it },
-                    label = { Text("Display Name") },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextWhite,
-                        unfocusedTextColor = TextWhite,
-                        focusedBorderColor = GoldAccent,
-                        unfocusedBorderColor = OutlineSubtle
-                    ),
-                    modifier = Modifier.fillMaxWidth().testTag("profile_name_input"),
-                    shape = RoundedCornerShape(12.dp),
-                    singleLine = true
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = ageText,
-                        onValueChange = { ageText = it.filter { ch -> ch.isDigit() } },
-                        label = { Text("Age (18+)") },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextWhite,
-                            unfocusedTextColor = TextWhite,
-                            focusedBorderColor = GoldAccent,
-                            unfocusedBorderColor = OutlineSubtle
-                        ),
-                        modifier = Modifier.weight(1f).testTag("profile_age_input"),
-                        shape = RoundedCornerShape(12.dp),
-                        singleLine = true
-                    )
-
-                    OutlinedTextField(
-                        value = city,
-                        onValueChange = { city = it },
-                        label = { Text("City (e.g. Manila)") },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextWhite,
-                            unfocusedTextColor = TextWhite,
-                            focusedBorderColor = GoldAccent,
-                            unfocusedBorderColor = OutlineSubtle
-                        ),
-                        modifier = Modifier.weight(1.5f),
-                        shape = RoundedCornerShape(12.dp),
-                        singleLine = true
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Gender selector
-                Text(
-                    text = "Gender",
-                    color = TextMuted,
-                    fontSize = 12.sp,
-                    modifier = Modifier.align(Alignment.Start)
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("Female", "Male", "Non-binary").forEach { g ->
-                        FilterChip(
-                            selected = gender == g,
-                            onClick = { gender = g },
-                            label = { Text(g) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = BurgundyPrimary,
-                                selectedLabelColor = TextWhite,
-                                containerColor = MatteBlackSurfaceVariant,
-                                labelColor = TextMuted
-                            )
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                OutlinedTextField(
-                    value = aboutMe,
-                    onValueChange = { aboutMe = it },
-                    label = { Text("About Me") },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextWhite,
-                        unfocusedTextColor = TextWhite,
-                        focusedBorderColor = GoldAccent,
-                        unfocusedBorderColor = OutlineSubtle
-                    ),
-                    modifier = Modifier.fillMaxWidth().height(100.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    maxLines = 4
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "Personality & Interests",
-                    color = TextMuted,
-                    fontSize = 12.sp,
-                    modifier = Modifier.align(Alignment.Start)
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    allInterests.forEach { interest ->
-                        val isSelected = selectedInterests.value.contains(interest)
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                val current = selectedInterests.value.toMutableSet()
-                                if (isSelected) current.remove(interest) else current.add(interest)
-                                selectedInterests.value = current
-                            },
-                            label = { Text(interest, fontSize = 11.sp) },
-                            leadingIcon = if (isSelected) {
-                                { Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) }
-                            } else null,
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = BurgundyPrimary,
-                                selectedLabelColor = GoldLight,
-                                containerColor = MatteBlackSurfaceVariant,
-                                labelColor = TextMuted
-                            )
-                        )
-                    }
-                }
-
-                if (errorText != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = errorText!!,
-                        color = Color(0xFFFF5252),
-                        fontSize = 12.sp
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                Button(
-                    onClick = {
-                        val ageNum = ageText.toIntOrNull() ?: 0
-                        if (displayName.isBlank()) {
-                            errorText = "Please enter your display name"
-                            return@Button
-                        }
-                        if (ageNum < 18) {
-                            errorText = "You must be at least 18 years old to join SOGO CHAT."
-                            return@Button
-                        }
-                        errorText = null
-                        onSaveProfile(
-                            displayName.trim(),
-                            ageNum,
-                            gender,
-                            country.trim(),
-                            city.trim(),
-                            aboutMe.trim(),
-                            selectedInterests.value.toList()
-                        )
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("save_profile_button"),
-                    shape = RoundedCornerShape(25.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = BurgundyPrimary)
-                ) {
-                    Text("Enter SOGO Chat & Meet", fontWeight = FontWeight.Bold, color = TextWhite)
-                }
-            }
         }
     }
 }

@@ -178,7 +178,7 @@ jobs:
           PY
 
       - name: Run Android Unit Tests
-        run: gradle :app:testDebugUnitTest --tests '*AuthComponentsTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest'
+        run: gradle :app:testDebugUnitTest --tests '*ModelsSerializationTest*' --tests '*MemberProfileSetupScreenTest*' --tests '*AuthComponentsTest*' --tests '*AuthValidatingCardTest*' --tests '*FirebaseAuthListenerTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest'
 
       - name: Build Signed Release APK (when release keystore secrets exist)
         if: steps.keystore.outputs.has_release == 'true'

@@ -12,10 +12,24 @@
 #   public *;
 #}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Production R8 / ProGuard keep rules for SOGO CHAT AND MEET
+-keep class * {
+    @androidx.annotation.Keep <fields>;
+    @androidx.annotation.Keep <methods>;
+}
+-keep @androidx.annotation.Keep class * { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Keep Firestore POJO models & PropertyName annotations
+-keepclassmembers class com.example.data.model.** { *; }
+-keepattributes *Annotation*,Signature
+
+# WebRTC native signaling classes
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**
+
+# Networking & Moshi
+-keepclassmembers class * {
+    @com.squareup.moshi.Json *;
+}
+-dontwarn okhttp3.**
+-dontwarn retrofit2.**

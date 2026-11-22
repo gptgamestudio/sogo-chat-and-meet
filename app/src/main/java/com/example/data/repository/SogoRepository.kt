@@ -130,6 +130,10 @@ class SogoRepository(
     // --- User Profile Operations ---
 
     override fun observeCurrentUserProfile(userId: String): Flow<UserProfile?> = callbackFlow {
+        if (userId.isBlank()) {
+            close(IllegalArgumentException("User ID cannot be blank."))
+            return@callbackFlow
+        }
         val path = "users/$userId"
         val registration = db.collection("users").document(userId)
             .addSnapshotListener { snapshot, error ->
@@ -170,20 +174,35 @@ class SogoRepository(
 
     override suspend fun saveUserProfile(profile: UserProfile) {
         val uid = requireUserId()
+        val safeDisplayName = profile.displayName.trim().ifBlank { "Member" }.take(50)
+        val safeGender = profile.gender.trim().ifBlank { "Female" }.take(30)
+        val safeCountry = profile.country.trim().ifBlank { "Philippines" }.take(60)
+        val safeCity = profile.city?.trim()?.takeIf { it.isNotBlank() }?.take(60) ?: "Manila"
+        val safeAboutMe = (profile.aboutMe ?: "").trim().take(1000)
+        val safeBirthday = profile.birthday?.trim()?.takeIf { it.isNotBlank() }?.take(30)
+        val safePersonality = profile.personality?.trim()?.takeIf { it.isNotBlank() }?.take(100)
+        val safePhotoUrl = profile.photoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }
+        val safeInterests = profile.interests
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(25)
+
         val docRef = db.collection("users").document(uid)
         val payload = mutableMapOf<String, Any?>(
             "userId" to uid,
-            "displayName" to profile.displayName.trim(),
-            "birthday" to profile.birthday,
+            "displayName" to safeDisplayName,
+            "birthday" to safeBirthday,
             "age" to profile.age,
-            "gender" to profile.gender,
-            "country" to profile.country,
-            "city" to (profile.city?.takeIf { it.isNotBlank() } ?: "Manila"),
-            "aboutMe" to (profile.aboutMe ?: ""),
-            "personality" to profile.personality,
-            "photoUrl" to profile.photoUrl,
-            "interests" to profile.interests,
+            "gender" to safeGender,
+            "country" to safeCountry,
+            "city" to safeCity,
+            "aboutMe" to safeAboutMe,
+            "personality" to safePersonality,
+            "photoUrl" to safePhotoUrl,
+            "interests" to safeInterests,
             "isOnline" to true,
+            "role" to "member",
             "lastActive" to FieldValue.serverTimestamp(),
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -238,7 +257,9 @@ class SogoRepository(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                handleFirestoreError(e, OperationType.UPDATE, presenceDoc.path)
+                if (auth.currentUser != null) {
+                    handleFirestoreError(e, OperationType.UPDATE, presenceDoc.path)
+                }
             }
         }
     }
@@ -327,19 +348,22 @@ class SogoRepository(
         val messageRef = db.collection("conversations").document(conversationId)
             .collection("messages").document(messageId)
 
+        val safeContent = content.trim().take(2000)
+        val safeMediaUrl = mediaUrl?.trim()?.takeIf { it.isNotBlank() }?.take(1000)
+
         val messagePayload = mutableMapOf<String, Any?>(
             "messageId" to messageId,
             "conversationId" to conversationId,
             "senderId" to uid,
             "receiverId" to receiverId,
             "participantUids" to participants,
-            "content" to content.trim(),
+            "content" to safeContent,
             "type" to type,
             "isRead" to false,
             "createdAt" to FieldValue.serverTimestamp()
         )
-        if (mediaUrl != null) {
-            messagePayload["mediaUrl"] = mediaUrl
+        if (safeMediaUrl != null) {
+            messagePayload["mediaUrl"] = safeMediaUrl
         }
 
         val convRef = db.collection("conversations").document(conversationId)
@@ -348,19 +372,22 @@ class SogoRepository(
             "IMAGE" -> "📷 Photo"
             "VOICE" -> "🎤 Voice message"
             "STICKER" -> "✨ Sticker"
-            else -> content.trim()
+            else -> safeContent
         }
 
         try {
-            messageRef.set(messagePayload).await()
-            convRef.update(
-                mapOf(
-                    "lastMessage" to snippet,
-                    "lastMessageSenderId" to uid,
-                    "lastMessageTimestamp" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
+            db.batch().apply {
+                set(messageRef, messagePayload)
+                update(
+                    convRef,
+                    mapOf(
+                        "lastMessage" to snippet,
+                        "lastMessageSenderId" to uid,
+                        "lastMessageTimestamp" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
                 )
-            ).await()
+            }.commit().await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -426,6 +453,9 @@ class SogoRepository(
                 if (error != null) {
                     if (auth.currentUser != null) {
                         handleFirestoreError(error, OperationType.LIST, "user_blocks")
+                        close(error)
+                    } else {
+                        close()
                     }
                     return@addSnapshotListener
                 }
@@ -441,6 +471,9 @@ class SogoRepository(
                 if (error != null) {
                     if (auth.currentUser != null) {
                         handleFirestoreError(error, OperationType.LIST, "user_blocks")
+                        close(error)
+                    } else {
+                        close()
                     }
                     return@addSnapshotListener
                 }
@@ -465,16 +498,21 @@ class SogoRepository(
             "reportId" to reportId,
             "reporterId" to uid,
             "reportedId" to reportedId,
-            "reason" to reason,
+            "reason" to reason.trim().ifBlank { "Inappropriate behavior" }.take(100),
             "status" to "PENDING",
             "createdAt" to FieldValue.serverTimestamp()
         )
-        if (!details.isNullOrBlank()) {
-            payload["details"] = details.trim()
+        val safeDetails = details?.trim()?.takeIf { it.isNotBlank() }?.take(1000)
+        if (safeDetails != null) {
+            payload["details"] = safeDetails
         }
         try {
             primaryDoc.set(payload).await()
-            try { aliasDoc.set(payload).await() } catch (_: Exception) {}
+            try {
+                aliasDoc.set(payload).await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {}
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -508,6 +546,8 @@ class SogoRepository(
         val docRef = db.collection("notifications").document(notificationId)
         try {
             docRef.update("isRead", true).await()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docRef.path)
         }
@@ -923,7 +963,11 @@ class SogoRepository(
         val ownReactionRef = db.collection("users").document(uid)
             .collection("activity_reactions").document(postId)
         try {
-            try { ownReactionRef.delete().await() } catch (_: Exception) {}
+            try {
+                ownReactionRef.delete().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {}
             postRef.delete().await()
         } catch (e: CancellationException) {
             throw e
@@ -1006,48 +1050,88 @@ class SogoRepository(
             userBackupData = docRef.get().await().data
 
             // Step 2: Delete owner-deletable Firestore documents while Auth token is still valid
-            try { presenceRef.delete().await() } catch (_: Exception) {}
+            try {
+                presenceRef.delete().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {}
 
             val ownNotifications = try {
                 db.collection("notifications").whereEqualTo("userId", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) { null }
             ownNotifications?.documents?.forEach { doc ->
-                try { doc.reference.delete().await() } catch (_: Exception) {}
+                try {
+                    doc.reference.delete().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
             }
 
             val ownBlocks = try {
                 db.collection("user_blocks").whereEqualTo("blockerId", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) { null }
             ownBlocks?.documents?.forEach { doc ->
-                try { doc.reference.delete().await() } catch (_: Exception) {}
+                try {
+                    doc.reference.delete().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
             }
 
             val ownFriendRequests = try {
                 db.collection("friend_requests").whereArrayContains("participantUids", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) { null }
             ownFriendRequests?.documents?.forEach { doc ->
-                try { doc.reference.delete().await() } catch (_: Exception) {}
+                try {
+                    doc.reference.delete().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
             }
 
             val ownCallSessions = try {
                 db.collection("call_sessions").whereArrayContains("participantUids", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) { null }
             ownCallSessions?.documents?.forEach { doc ->
-                try { doc.reference.delete().await() } catch (_: Exception) {}
+                try {
+                    doc.reference.delete().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
             }
 
             val ownActivityPosts = try {
                 db.collection("activity_posts").whereEqualTo("authorId", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) { null }
             ownActivityPosts?.documents?.forEach { doc ->
-                try { doc.reference.delete().await() } catch (_: Exception) {}
+                try {
+                    doc.reference.delete().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
             }
 
             val ownActivityReactions = try {
                 db.collection("users").document(uid).collection("activity_reactions").get().await()
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) { null }
             ownActivityReactions?.documents?.forEach { doc ->
-                try { doc.reference.delete().await() } catch (_: Exception) {}
+                try {
+                    doc.reference.delete().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
             }
 
             docRef.delete().await()

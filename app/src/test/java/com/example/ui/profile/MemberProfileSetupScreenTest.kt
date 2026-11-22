@@ -68,4 +68,29 @@ class MemberProfileSetupScreenTest {
         assertNotNull(expectedAge)
         assertEquals(expectedAge, savedAge)
     }
+
+    @Test
+    fun memberProfileSetupScreen_clampsLongDefaultDisplayNameTo50Chars() {
+        val longGoogleName = "A".repeat(75)
+        var savedName: String? = null
+
+        composeTestRule.setContent {
+            SogoChatTheme {
+                MemberProfileSetupScreen(
+                    initialProfile = null,
+                    defaultDisplayName = longGoogleName,
+                    onSaveProfile = { name, _, _, _, _, _, _, _, _, _ ->
+                        savedName = name
+                    }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("submit_profile_button")
+            .performScrollTo()
+            .performClick()
+        composeTestRule.waitForIdle()
+
+        assertEquals(50, savedName?.length)
+    }
 }

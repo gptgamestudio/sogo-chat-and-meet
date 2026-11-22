@@ -143,4 +143,4 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Run non-emulator unit tests and assemble Debug APK
-        run: gradle :app:testDebugUnitTest --tests '*AuthComponentsTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest' assembleDebug
+        run: gradle :app:testDebugUnitTest --tests '*ModelsSerializationTest*' --tests '*MemberProfileSetupScreenTest*' --tests '*AuthComponentsTest*' --tests '*AuthValidatingCardTest*' --tests '*FirebaseAuthListenerTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest' assembleDebug
