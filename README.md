@@ -10,6 +10,7 @@
 
 [![Download APK](https://img.shields.io/badge/Download-SOGO--CHAT--AND--MEET.apk-2EE59D?style=for-the-badge&logo=android&logoColor=0F0E11)](../../releases/latest/download/SOGO-CHAT-AND-MEET.apk)
 [![All Releases](https://img.shields.io/badge/GitHub-Releases-D4AF37?style=for-the-badge&logo=github&logoColor=0F0E11)](../../releases)
+[![Official Site](https://img.shields.io/badge/Website-GitHub%20Pages-6D1226?style=for-the-badge&logo=googlechrome&logoColor=D4AF37)](https://gptgamestudio.github.io/sogo-chat-and-meet/)
 
 [![Platform](https://img.shields.io/badge/Android-7.0%2B%20(API%2024%2B)-6D1226?style=for-the-badge&logo=android&logoColor=D4AF37)](https://developer.android.com)
 [![Age Rating](https://img.shields.io/badge/Community-18%2B%20Adults%20Only-17151B?style=for-the-badge&labelColor=D4AF37)](https://support.google.com/googleplay/android-developer)
@@ -25,10 +26,12 @@
 
 ## Direct Android APK Download
 
-- **Direct APK Link (Latest Build):** [`SOGO-CHAT-AND-MEET.apk`](../../releases/latest/download/SOGO-CHAT-AND-MEET.apk)
-- **Releases Page:** [GitHub Releases](../../releases)
+- **Official Guide & Landing Page:** [https://gptgamestudio.github.io/sogo-chat-and-meet/](https://gptgamestudio.github.io/sogo-chat-and-meet/)
+- **Direct APK Link (Latest Build):** [`SOGO-CHAT-AND-MEET.apk`](https://github.com/gptgamestudio/sogo-chat-and-meet/releases/latest/download/SOGO-CHAT-AND-MEET.apk)
+- **Releases Page:** [GitHub Releases](https://github.com/gptgamestudio/sogo-chat-and-meet/releases)
+- **Workflow Artifacts (CI Builds):** [Publish SOGO Android APK Release](https://github.com/gptgamestudio/sogo-chat-and-meet/actions/workflows/publish-apk.yml)
 
-> **Paalala sa Auto-Build:** Tuwing may push sa `main` branch, awtomatikong binubuo ng `.github/workflows/publish-apk.yml` ang **`SOGO-CHAT-AND-MEET.apk`** at inilalagay sa **`latest` Release** (`https://github.com/<USERNAME>/<REPO>/releases/latest/download/SOGO-CHAT-AND-MEET.apk`). *(Kung gusto mong direktang magamit ang pre-registered Google Sign-In SHA-1 debug keystore o production upload keystore, mag-upload din ng exported APK mula sa AI Studio o idagdag ang keystore secrets sa GitHub Settings → Secrets.)*
+> **Paalala sa Auto-Build:** Tuwing may push sa `main` branch, awtomatikong binubuo ng `.github/workflows/publish-apk.yml` ang **`SOGO-CHAT-AND-MEET.apk`**, ina-upload ito bilang Workflow Artifact, at awtomatikong ina-update ang **`latest` Release** (`https://github.com/gptgamestudio/sogo-chat-and-meet/releases/latest/download/SOGO-CHAT-AND-MEET.apk`).
 
 ---
 

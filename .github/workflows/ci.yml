@@ -15,21 +15,22 @@ jobs:
     name: Validate Firebase JSON & Rules Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Validate JSON configs
+      - name: Validate JSON and Sitemap configs
         run: |
           node -e 'JSON.parse(require("fs").readFileSync("firebase.json", "utf8"))'
           node -e 'JSON.parse(require("fs").readFileSync("firestore.indexes.json", "utf8"))'
+          python3 -c 'import xml.etree.ElementTree as ET; ET.parse("sitemap.xml")'
 
       - name: Install Firebase CLI and rules test dependencies
         run: |
@@ -43,9 +44,9 @@ jobs:
     name: Restore Firebase Config, Run Unit Tests & Assemble Debug
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
@@ -138,9 +139,10 @@ jobs:
           PY
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.3.1'
+          cache-provider: 'basic'
 
       - name: Run non-emulator unit tests and assemble Debug APK
         run: gradle :app:testDebugUnitTest --tests '*ModelsSerializationTest*' --tests '*MemberProfileSetupScreenTest*' --tests '*AuthComponentsTest*' --tests '*AuthValidatingCardTest*' --tests '*FirebaseAuthListenerTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest' assembleDebug

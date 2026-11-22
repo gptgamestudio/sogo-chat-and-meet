@@ -4,7 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SOGO CHAT AND MEET — Android APK Presentation & User Guide</title>
-  <meta name="description" content="Official presentation and user guide for SOGO CHAT AND MEET Android app — 18+ verified social discovery and private real-time chat." />
+  <meta name="description" content="Official presentation and user guide for SOGO CHAT AND MEET Android app — 18+ verified social discovery, free video calling, everyday activities, and private real-time chat." />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://gptgamestudio.github.io/sogo-chat-and-meet/" />
+  <link rel="sitemap" type="application/xml" title="Sitemap" href="https://gptgamestudio.github.io/sogo-chat-and-meet/sitemap.xml" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="SOGO CHAT AND MEET — Android APK &amp; User Guide" />
+  <meta property="og:description" content="18+ verified social discovery, free WebRTC audio/video calling, everyday activities, and private chat for Android 7.0+." />
+  <meta property="og:url" content="https://gptgamestudio.github.io/sogo-chat-and-meet/" />
   <style>
     :root {
       --bg: #0f0e11;
@@ -330,7 +337,7 @@
           Isang modernong dark-mode social discovery, free video calling, everyday activities, at private chat app para sa mga 18+ verified adults sa Pilipinas at abroad. Mabilis ang Google Sign-In, may emojis &amp; reactions, at kumpleto sa safety controls.
         </p>
         <div class="cta-row">
-          <a id="apk-download-hero" href="#install" class="btn-primary">Download APK</a>
+          <a id="apk-download-hero" href="https://github.com/gptgamestudio/sogo-chat-and-meet/releases/latest/download/SOGO-CHAT-AND-MEET.apk" class="btn-primary">Download Latest APK</a>
           <a href="#how-to-use" class="btn-secondary">Paano Gamitin</a>
         </div>
       </div>
@@ -389,15 +396,16 @@
     <section id="install">
       <div class="install-box">
         <h2 class="section-title">Paano I-Download at I-Install ang APK</h2>
-        <p class="section-desc" style="margin-bottom: 14px;">Compatible sa Android 7.0 (API 24) pataas. Kinakailangan ang naka-sign-in na GitHub account para sa Workflow Artifacts at Draft Releases.</p>
+        <p class="section-desc" style="margin-bottom: 14px;">Compatible sa Android 7.0 (API 24) pataas. Direkta nang dina-download ang pinakabagong APK mula sa GitHub Releases (<code>latest</code>), o puwede ring kunin sa Workflow Artifacts.</p>
         <div class="cta-row" style="margin-bottom: 16px;">
-          <a id="apk-download-install" href="https://github.com/gptgamestudioph/sogo-chat-and-meet/actions/workflows/publish-apk.yml" target="_blank" rel="noopener noreferrer" class="btn-primary">Download Latest Artifact (SOGO-CHAT-AND-MEET-apk)</a>
-          <a id="apk-releases-link" href="https://github.com/gptgamestudioph/sogo-chat-and-meet/releases" target="_blank" rel="noopener noreferrer" class="btn-secondary">View GitHub Releases / Drafts</a>
+          <a id="apk-download-install" href="https://github.com/gptgamestudio/sogo-chat-and-meet/releases/latest/download/SOGO-CHAT-AND-MEET.apk" target="_blank" rel="noopener noreferrer" class="btn-primary">Download Latest APK (SOGO-CHAT-AND-MEET.apk)</a>
+          <a id="apk-releases-link" href="https://github.com/gptgamestudio/sogo-chat-and-meet/releases" target="_blank" rel="noopener noreferrer" class="btn-secondary">View GitHub Releases</a>
+          <a id="apk-artifact-link" href="https://github.com/gptgamestudio/sogo-chat-and-meet/actions/workflows/publish-apk.yml" target="_blank" rel="noopener noreferrer" class="btn-secondary">Latest CI Artifact</a>
         </div>
         <ol>
-          <li>I-tap ang <strong>Download Latest Artifact</strong> button sa itaas (magbubukas ito ng pinakabagong matagumpay na GitHub Actions run) at i-download ang <strong>SOGO-CHAT-AND-MEET-apk</strong> sa ilalim ng <strong>Artifacts</strong>.</li>
-          <li>I-unzip ang na-download na artifact file at buksan ang <strong>SOGO-CHAT-AND-MEET.apk</strong> sa <strong>Downloads / File Manager</strong>. <em>(Kung may naka-publish na GitHub Release, maaari ring i-download direkta ang APK mula sa Releases.)</em></li>
-          <li>Kapag lumabas ang prompt, piliin ang <strong>Settings → Allow from this source</strong> para sa APK installation.</li>
+          <li>I-tap ang <strong>Download Latest APK</strong> button sa itaas para ma-download agad ang pinakabagong <strong>SOGO-CHAT-AND-MEET.apk</strong> mula sa GitHub <strong>Releases / latest</strong>.</li>
+          <li>Kung mas gusto mong kunin sa GitHub Actions, i-tap ang <strong>Latest CI Artifact</strong> (kailangan naka-sign in sa GitHub), i-download ang <strong>SOGO-CHAT-AND-MEET-apk</strong>, at i-unzip ito.</li>
+          <li>Kapag lumabas ang prompt sa Android, piliin ang <strong>Settings → Allow from this source</strong> para sa APK installation.</li>
           <li>I-tap ang <strong>Install</strong>, hintaying matapos, at buksan ang app.</li>
         </ol>
       </div>
@@ -406,13 +414,12 @@
     <section id="manual-release-verification">
       <div class="install-box">
         <h2 class="section-title">Manual Release Verification</h2>
-        <p class="section-desc" style="margin-bottom: 14px;">Para sa mga user o tester na mas gustong gumamit ng pre-built binary APK kaysa mag-download at mag-unzip ng GitHub Actions workflow artifact.</p>
+        <p class="section-desc" style="margin-bottom: 14px;">Para sa mga user o tester na gustong i-verify ang release version at assets sa GitHub bago mag-install.</p>
         <div class="cta-row" style="margin-bottom: 16px;">
-          <a id="apk-draft-release-link" href="https://github.com/gptgamestudioph/sogo-chat-and-meet/releases" target="_blank" rel="noopener noreferrer" class="btn-secondary">Open GitHub Releases &amp; Drafts</a>
+          <a id="apk-draft-release-link" href="https://github.com/gptgamestudio/sogo-chat-and-meet/releases" target="_blank" rel="noopener noreferrer" class="btn-secondary">Open GitHub Releases</a>
         </div>
         <ol>
-          <li>Mag-sign in sa GitHub account na may access sa repository (kinakailangan ang GitHub login para makita ang <strong>Draft</strong> releases).</li>
-          <li>Buksan ang <strong>Open GitHub Releases &amp; Drafts</strong> button sa itaas at piliin ang pinakabagong draft o published release entry.</li>
+          <li>Buksan ang <strong>Open GitHub Releases</strong> button sa itaas at piliin ang <strong>Latest</strong> release (<code>SOGO CHAT AND MEET — Latest Android APK</code>).</li>
           <li>I-expand ang <strong>Assets</strong> section at i-tap direkta ang <strong>SOGO-CHAT-AND-MEET.apk</strong> para ma-download ang pre-built APK nang hindi na kailangang mag-extract ng <code>.zip</code> file.</li>
           <li>Pagkatapos ma-download, buksan ang APK mula sa <strong>Downloads / File Manager</strong>, payagan ang <strong>Install unknown apps</strong> kung hihingin, at i-verify ang package ID (<code>com.sogo.chatandmeet</code>) habang ini-install.</li>
         </ol>
@@ -427,7 +434,7 @@
 
   <script>
     (function () {
-      var owner = "gptgamestudioph";
+      var owner = "gptgamestudio";
       var repo = "sogo-chat-and-meet";
       var host = window.location.hostname || "";
       if (host.endsWith(".github.io")) {
@@ -437,34 +444,36 @@
       }
 
       var repoBase = "https://github.com/" + owner + "/" + repo;
+      var latestApkUrl = repoBase + "/releases/latest/download/SOGO-CHAT-AND-MEET.apk";
       var workflowRunsUrl = repoBase + "/actions/workflows/publish-apk.yml";
       var releasesUrl = repoBase + "/releases";
 
       var heroBtn = document.getElementById("apk-download-hero");
       var installBtn = document.getElementById("apk-download-install");
       var releasesBtn = document.getElementById("apk-releases-link");
+      var artifactBtn = document.getElementById("apk-artifact-link");
       var draftReleaseBtn = document.getElementById("apk-draft-release-link");
 
-      if (installBtn) installBtn.href = workflowRunsUrl;
+      if (heroBtn) {
+        heroBtn.href = latestApkUrl;
+        heroBtn.target = "_blank";
+        heroBtn.rel = "noopener noreferrer";
+      }
+      if (installBtn) installBtn.href = latestApkUrl;
       if (releasesBtn) releasesBtn.href = releasesUrl;
+      if (artifactBtn) artifactBtn.href = workflowRunsUrl;
       if (draftReleaseBtn) draftReleaseBtn.href = releasesUrl;
 
       if (typeof fetch !== "function") return;
 
-      // Point directly to the latest successful workflow run's Artifacts section when available
+      // Also resolve the Latest CI Artifact link to the newest successful run's #artifacts section
       var apiRunsUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/actions/workflows/publish-apk.yml/runs?status=success&per_page=1";
       fetch(apiRunsUrl, { headers: { Accept: "application/vnd.github+json" } })
         .then(function (res) { return res.ok ? res.json() : null; })
         .then(function (data) {
           var latestRun = data && Array.isArray(data.workflow_runs) ? data.workflow_runs[0] : null;
           if (!latestRun || !latestRun.html_url) return;
-          var runArtifactsUrl = latestRun.html_url + "#artifacts";
-          if (installBtn) installBtn.href = runArtifactsUrl;
-          if (heroBtn) {
-            heroBtn.href = runArtifactsUrl;
-            heroBtn.target = "_blank";
-            heroBtn.rel = "noopener noreferrer";
-          }
+          if (artifactBtn) artifactBtn.href = latestRun.html_url + "#artifacts";
         })
         .catch(function () { /* Keep fallback workflow URL */ });
     })();

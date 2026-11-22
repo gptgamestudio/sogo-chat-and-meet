@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://gptgamestudio.github.io/sogo-chat-and-meet/sitemap.xml
