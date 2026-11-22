@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cake
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -50,6 +52,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
@@ -59,6 +62,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -86,6 +90,7 @@ import com.example.ui.theme.MatteBlackSurface
 import com.example.ui.theme.OffWhiteText
 import com.example.ui.theme.PhilippineGold
 import com.example.ui.theme.SecondaryMuted
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -219,7 +224,8 @@ fun MemberProfileSetupScreen(
         personality: String,
         interests: List<String>
     ) -> Unit,
-    onSignOut: () -> Unit = {}
+    onSignOut: () -> Unit = {},
+    onClose: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -280,19 +286,33 @@ fun MemberProfileSetupScreen(
     val birthdayString = "%04d-%02d-%02d".format(birthYear, birthMonth, birthDay)
 
     var isProcessingPhoto by remember { mutableStateOf(false) }
+    var imageLoadFailed by remember(photoUrl) { mutableStateOf(false) }
 
-    // Android Photo Picker launcher (inline compressed JPEG checked against Firestore photoUrl limit)
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
+    val handlePickedUri: (Uri?) -> Unit = { uri ->
         if (uri != null) {
             coroutineScope.launch {
                 isProcessingPhoto = true
                 localErrorMessage = null
                 val compressedDataUrl = withContext(Dispatchers.IO) {
                     try {
-                        context.contentResolver.openInputStream(uri)?.use { stream ->
-                            val bitmap = BitmapFactory.decodeStream(stream)
+                        val rawBytes = context.contentResolver.openInputStream(uri)?.use { stream ->
+                            stream.readBytes()
+                        }
+                        if (rawBytes != null && rawBytes.isNotEmpty()) {
+                            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, boundsOpts)
+                            var sampleSize = 1
+                            val maxSide = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
+                            if (maxSide > 640) {
+                                while ((maxSide / (sampleSize * 2)) >= 320) {
+                                    sampleSize *= 2
+                                }
+                            }
+                            val decodeOpts = BitmapFactory.Options().apply {
+                                inSampleSize = sampleSize
+                                inPreferredConfig = Bitmap.Config.RGB_565
+                            }
+                            val bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, decodeOpts)
                             if (bitmap != null) {
                                 val maxDimension = 320
                                 val scale = (maxDimension.toFloat() / maxOf(bitmap.width, bitmap.height)).coerceAtMost(1f)
@@ -302,6 +322,9 @@ fun MemberProfileSetupScreen(
                                     (bitmap.height * scale).toInt().coerceAtLeast(1),
                                     true
                                 )
+                                if (scaled !== bitmap) {
+                                    bitmap.recycle()
+                                }
                                 val baos = ByteArrayOutputStream()
                                 var quality = 70
                                 var encoded: String
@@ -311,19 +334,49 @@ fun MemberProfileSetupScreen(
                                     encoded = "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
                                     quality -= 15
                                 } while (encoded.length > 60000 && quality >= 25)
+                                scaled.recycle()
                                 if (encoded.length <= 60000) encoded else null
                             } else null
-                        }
-                    } catch (e: Exception) {
+                        } else null
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        Log.w("MemberProfileSetup", "Failed to process picked photo: ${t.message}")
                         null
                     }
                 }
                 if (compressedDataUrl != null) {
+                    imageLoadFailed = false
                     photoUrl = compressedDataUrl
                 } else {
-                    localErrorMessage = "Selected image could not fit profile size limits. Choose a smaller photo or preset."
+                    localErrorMessage = "Could not load selected photo. Please try another photo or choose a preset below."
                 }
                 isProcessingPhoto = false
+            }
+        }
+    }
+
+    // Android Photo Picker primary + zero-permission GetContent fallback for OEM ROM compatibility
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+        onResult = handlePickedUri
+    )
+    val fallbackGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = handlePickedUri
+    )
+    val launchPhotoPicker: () -> Unit = {
+        localErrorMessage = null
+        try {
+            photoPickerLauncher.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        } catch (t: Throwable) {
+            Log.w("MemberProfileSetup", "PickVisualMedia unavailable, falling back to GetContent: ${t.message}")
+            try {
+                fallbackGalleryLauncher.launch("image/*")
+            } catch (fallbackErr: Throwable) {
+                localErrorMessage = "Unable to open photo gallery on this device. Choose a preset avatar below."
             }
         }
     }
@@ -331,6 +384,23 @@ fun MemberProfileSetupScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    if (onClose != null) {
+                        IconButton(
+                            onClick = { if (!isSaving) onClose() },
+                            enabled = !isSaving,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("edit_profile_close_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = PhilippineGold
+                            )
+                        }
+                    }
+                },
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
@@ -401,26 +471,51 @@ fun MemberProfileSetupScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Profile Photo Section
+            // Profile Photo Section (both the circle and camera button open Photo Picker)
             Box(
                 contentAlignment = Alignment.BottomEnd,
-                modifier = Modifier.size(120.dp)
+                modifier = Modifier.size(126.dp)
             ) {
                 Box(
                     modifier = Modifier
                         .size(120.dp)
+                        .align(Alignment.Center)
                         .clip(CircleShape)
                         .border(3.dp, PhilippineGold, CircleShape)
-                        .background(MatteBlackCard),
+                        .background(MatteBlackCard)
+                        .clickable(enabled = !isProcessingPhoto) { launchPhotoPicker() },
                     contentAlignment = Alignment.Center
                 ) {
                     if (isProcessingPhoto) {
                         CircularProgressIndicator(color = PhilippineGold, modifier = Modifier.size(36.dp))
+                    } else if (photoUrl.isBlank() || imageLoadFailed) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = "Tap to Add Photo",
+                                tint = PhilippineGold,
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Add Photo",
+                                color = PhilippineGold,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     } else {
                         AsyncImage(
                             model = photoUrl,
                             contentDescription = "Profile Photo",
                             contentScale = ContentScale.Crop,
+                            onError = { imageLoadFailed = true },
+                            onSuccess = { imageLoadFailed = false },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -428,14 +523,11 @@ fun MemberProfileSetupScreen(
 
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .background(PhilippineGold)
-                        .clickable {
-                            photoPickerLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        }
+                        .border(2.dp, MatteBlackCard, CircleShape)
+                        .clickable(enabled = !isProcessingPhoto) { launchPhotoPicker() }
                         .testTag("upload_photo_button"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -443,14 +535,46 @@ fun MemberProfileSetupScreen(
                         imageVector = Icons.Default.CameraAlt,
                         contentDescription = "Upload Photo",
                         tint = Color.Black,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OutlinedButton(
+                onClick = { launchPhotoPicker() },
+                enabled = !isProcessingPhoto,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = PhilippineGold),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.testTag("choose_gallery_photo_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CameraAlt,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isProcessingPhoto) "Loading Photo..." else "Choose Photo from Gallery",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            if (localErrorMessage != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = localErrorMessage ?: "",
+                    color = Color(0xFFFF8A80),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "Tap camera icon to select photo or choose a preset below",
+                text = "Or tap a quick avatar preset below",
                 color = SecondaryMuted,
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center

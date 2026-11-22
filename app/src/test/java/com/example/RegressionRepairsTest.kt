@@ -673,4 +673,52 @@ class RegressionRepairsTest {
 
         collectJob.cancel()
     }
+
+    @Test
+    fun reportSubmission_setsAndClearsConfirmationFlag() = runTest {
+        val fake = FakeSogoDataSource(currentUid = "uid_me")
+        val chatVm = ChatViewModel(app, fake)
+        val partner = UserProfile(userId = "uid_alice", displayName = "Alice", age = 24)
+
+        chatVm.initializeChat(partner)
+        advanceUntilIdle()
+        assertFalse(chatVm.uiState.value.reportSubmitted)
+
+        chatVm.reportCurrentMember("Fake profile or impersonation", "Details here")
+        advanceUntilIdle()
+        assertTrue(chatVm.uiState.value.reportSubmitted)
+
+        chatVm.clearReportSubmitted()
+        advanceUntilIdle()
+        assertFalse(chatVm.uiState.value.reportSubmitted)
+    }
+
+    @Test
+    fun onlineAndOfflineFilters_toggleMutuallyExclusively() = runTest {
+        val fake = FakeSogoDataSource(currentUid = "uid_me")
+        val onlineAlice = UserProfile(userId = "uid_alice", displayName = "Alice", age = 24, isOnline = true)
+        val offlineBob = UserProfile(userId = "uid_bob", displayName = "Bob", age = 27, isOnline = false)
+        fake.membersFlow.value = listOf(onlineAlice, offlineBob)
+
+        val vm = MainDashboardViewModel(app, fake)
+        val collectJob = backgroundScope.launch { vm.uiState.collect() }
+        advanceUntilIdle()
+
+        // Both online and offline members appear by default
+        assertEquals(listOf("uid_alice", "uid_bob"), vm.uiState.value.filteredMembers.map { it.userId })
+
+        // Toggle Online Only
+        vm.toggleOnlineOnly()
+        advanceUntilIdle()
+        assertEquals(listOf("uid_alice"), vm.uiState.value.filteredMembers.map { it.userId })
+
+        // Toggle Offline Only clears Online Only automatically
+        vm.toggleOfflineOnly()
+        advanceUntilIdle()
+        assertEquals(listOf("uid_bob"), vm.uiState.value.filteredMembers.map { it.userId })
+        assertFalse(vm.uiState.value.filter.onlineOnly)
+        assertTrue(vm.uiState.value.filter.offlineOnly)
+
+        collectJob.cancel()
+    }
 }

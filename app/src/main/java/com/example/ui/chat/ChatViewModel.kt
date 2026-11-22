@@ -119,6 +119,10 @@ class ChatViewModel(
         _uiState.update { it.copy(errorMessage = null) }
     }
 
+    fun clearReportSubmitted() {
+        _uiState.update { it.copy(reportSubmitted = false) }
+    }
+
     fun reportFeatureNotImplemented(message: String) {
         _uiState.update { it.copy(errorMessage = message) }
     }

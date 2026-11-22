@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [ main, master ]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -26,11 +30,23 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Validate JSON and Sitemap configs
+      - name: Validate JSON, AdMob, and Website configs
         run: |
           node -e 'JSON.parse(require("fs").readFileSync("firebase.json", "utf8"))'
           node -e 'JSON.parse(require("fs").readFileSync("firestore.indexes.json", "utf8"))'
-          python3 -c 'import xml.etree.ElementTree as ET; ET.parse("sitemap.xml")'
+          python3 -c 'import xml.etree.ElementTree as ET; ET.parse("sitemap.xml"); ET.parse("app/src/main/res/values/strings.xml")'
+          python3 - <<'PY'
+          import os, sys
+          for required in ("app-ads.txt", "robots.txt", "index.html"):
+              if not os.path.isfile(required):
+                  print(f"ERROR: Missing required file: {required}", file=sys.stderr)
+                  sys.exit(1)
+          app_ads = open("app-ads.txt", encoding="utf-8").read()
+          if "pub-9786472984542330" not in app_ads:
+              print("ERROR: app-ads.txt is missing AdMob publisher ID pub-9786472984542330.", file=sys.stderr)
+              sys.exit(1)
+          print("Validated Firebase JSON, sitemap.xml, strings.xml, and app-ads.txt.")
+          PY
 
       - name: Install Firebase CLI and rules test dependencies
         run: |
@@ -145,4 +161,4 @@ jobs:
           cache-provider: 'basic'
 
       - name: Run non-emulator unit tests and assemble Debug APK
-        run: gradle :app:testDebugUnitTest --tests '*ModelsSerializationTest*' --tests '*MemberProfileSetupScreenTest*' --tests '*AuthComponentsTest*' --tests '*AuthValidatingCardTest*' --tests '*FirebaseAuthListenerTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest' assembleDebug
+        run: gradle :app:testDebugUnitTest --tests '*ModelsSerializationTest*' --tests '*MemberProfileSetupScreenTest*' --tests '*AuthComponentsTest*' --tests '*AuthValidatingCardTest*' --tests '*FirebaseAuthListenerTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest' assembleDebug --console=plain

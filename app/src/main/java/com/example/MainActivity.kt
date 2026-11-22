@@ -388,7 +388,12 @@ fun TwoDestinationNavigator(
             if (hasMic && hasCamera) {
                 callViewModel.acceptIncomingCall()
             } else {
-                callViewModel.reportPermissionDenied("Camera and microphone permissions are needed to answer a video call.")
+                val msg = if (needCamera) {
+                    "Camera and microphone permissions are needed to answer a video call."
+                } else {
+                    "Microphone permission is needed to answer a voice call."
+                }
+                callViewModel.reportPermissionDenied(msg)
                 callViewModel.declineIncomingCall()
             }
         } else if (outgoing != null) {
@@ -403,7 +408,12 @@ fun TwoDestinationNavigator(
                     callType = callType
                 )
             } else {
-                dashboardViewModel.reportError("Please grant Microphone & Camera permissions for free calling.")
+                val msg = if (needCamera) {
+                    "Please grant Microphone & Camera permissions for free video calling."
+                } else {
+                    "Please grant Microphone permission for free voice calling."
+                }
+                dashboardViewModel.reportError(msg)
             }
         }
     }

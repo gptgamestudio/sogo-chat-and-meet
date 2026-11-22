@@ -693,11 +693,11 @@ class SogoRepository(
             "createdAt" to FieldValue.serverTimestamp(),
             "updatedAt" to FieldValue.serverTimestamp()
         )
-        if (!callerPhotoUrl.isNullOrBlank()) {
-            payload["callerPhotoUrl"] = callerPhotoUrl
+        callerPhotoUrl?.takeIf { it.isNotBlank() && it.length <= 65000 }?.let {
+            payload["callerPhotoUrl"] = it
         }
-        if (!callee.photoUrl.isNullOrBlank()) {
-            payload["calleePhotoUrl"] = callee.photoUrl
+        callee.photoUrl?.takeIf { it.isNotBlank() && it.length <= 65000 }?.let {
+            payload["calleePhotoUrl"] = it
         }
         try {
             docRef.set(payload).await()
@@ -859,8 +859,8 @@ class SogoRepository(
             "createdAt" to FieldValue.serverTimestamp(),
             "updatedAt" to FieldValue.serverTimestamp()
         )
-        if (!authorProfile?.photoUrl.isNullOrBlank()) {
-            payload["authorPhotoUrl"] = authorProfile?.photoUrl
+        authorProfile?.photoUrl?.takeIf { it.isNotBlank() && it.length <= 65000 }?.let {
+            payload["authorPhotoUrl"] = it
         }
         if (!authorProfile?.city.isNullOrBlank()) {
             payload["authorCity"] = authorProfile?.city?.take(60)

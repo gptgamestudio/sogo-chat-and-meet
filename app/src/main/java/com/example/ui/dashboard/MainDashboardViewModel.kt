@@ -26,7 +26,8 @@ data class DashboardFilter(
     val countryFilter: String = "ALL", // "ALL", "Philippines", "Overseas"
     val ageRange: String = "ALL", // "ALL", "18-24", "25-34", "35+"
     val onlineOnly: Boolean = false,
-    val friendsOnly: Boolean = false
+    val friendsOnly: Boolean = false,
+    val offlineOnly: Boolean = false
 )
 
 data class IncomingFriendRequestItem(
@@ -160,6 +161,7 @@ class MainDashboardViewModel(
             if (member.userId == currentUid) return@filter false
             if (blocked.contains(member.userId)) return@filter false
             if (filter.onlineOnly && !member.isOnline) return@filter false
+            if (filter.offlineOnly && member.isOnline) return@filter false
             if (filter.friendsOnly && statusMap[member.userId] != FriendStatus.FRIENDS) return@filter false
             if (filter.genderFilter != "ALL" && !member.gender.equals(filter.genderFilter, ignoreCase = true)) {
                 return@filter false
@@ -450,7 +452,19 @@ class MainDashboardViewModel(
     }
 
     fun toggleOnlineOnly() {
-        _filter.value = _filter.value.copy(onlineOnly = !_filter.value.onlineOnly)
+        val next = !_filter.value.onlineOnly
+        _filter.value = _filter.value.copy(
+            onlineOnly = next,
+            offlineOnly = if (next) false else _filter.value.offlineOnly
+        )
+    }
+
+    fun toggleOfflineOnly() {
+        val next = !_filter.value.offlineOnly
+        _filter.value = _filter.value.copy(
+            offlineOnly = next,
+            onlineOnly = if (next) false else _filter.value.onlineOnly
+        )
     }
 
     fun toggleFriendsOnly() {

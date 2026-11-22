@@ -251,6 +251,7 @@ fun ProfileAndChatScreen(
                     onClick = {
                         showReportDialog = false
                         viewModel.reportCurrentMember(reportReason, reportDetails)
+                        reportDetails = ""
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = BurgundyPrimary)
                 ) {
@@ -260,6 +261,42 @@ fun ProfileAndChatScreen(
             dismissButton = {
                 TextButton(onClick = { showReportDialog = false }) {
                     Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = MatteBlackSurface
+        )
+    }
+
+    // Report Confirmation Dialog
+    if (uiState.reportSubmitted) {
+        AlertDialog(
+            onDismissRequest = { viewModel.clearReportSubmitted() },
+            title = { Text("Report Submitted", color = GoldLight) },
+            text = {
+                Text(
+                    "Thank you for helping keep SOGO CHAT safe. Your report about ${partner.displayName} has been recorded for review. You can also block this member immediately.",
+                    color = TextMuted,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.clearReportSubmitted()
+                        showBlockConfirmDialog = true
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AlertRed),
+                    modifier = Modifier.testTag("report_submitted_block_button")
+                ) {
+                    Text("Block Member", color = TextWhite)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.clearReportSubmitted() },
+                    modifier = Modifier.testTag("report_submitted_done_button")
+                ) {
+                    Text("Done", color = GoldLight)
                 }
             },
             containerColor = MatteBlackSurface

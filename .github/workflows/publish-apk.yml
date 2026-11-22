@@ -6,6 +6,10 @@ on:
     tags: [ 'v*' ]
   workflow_dispatch:
 
+concurrency:
+  group: publish-apk-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -179,48 +183,97 @@ jobs:
           PY
 
       - name: Run Android Unit Tests
-        run: gradle :app:testDebugUnitTest --tests '*ModelsSerializationTest*' --tests '*MemberProfileSetupScreenTest*' --tests '*AuthComponentsTest*' --tests '*AuthValidatingCardTest*' --tests '*FirebaseAuthListenerTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest'
+        run: gradle :app:testDebugUnitTest --tests '*ModelsSerializationTest*' --tests '*MemberProfileSetupScreenTest*' --tests '*AuthComponentsTest*' --tests '*AuthValidatingCardTest*' --tests '*FirebaseAuthListenerTest*' --tests '*ExampleUnitTest*' --tests 'com.example.ads.AdMobManagerTest' --tests 'com.example.RegressionRepairsTest' --console=plain
 
-      - name: Build Signed Release APK (when release keystore secrets exist)
+      - name: Inject Optional AdMob Banner Unit ID (Release Build Only)
+        if: steps.keystore.outputs.has_release == 'true'
+        env:
+          ADMOB_BANNER_UNIT_ID: ${{ secrets.ADMOB_BANNER_UNIT_ID }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys, xml.etree.ElementTree as ET
+
+          banner_id = os.environ.get("ADMOB_BANNER_UNIT_ID", "").strip()
+          strings_path = "app/src/main/res/values/strings.xml"
+          if banner_id:
+              if not re.match(r"^ca-app-pub-\d+/\d+$", banner_id):
+                  print("ERROR: ADMOB_BANNER_UNIT_ID must look like ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY.", file=sys.stderr)
+                  sys.exit(1)
+              tree = ET.parse(strings_path)
+              root = tree.getroot()
+              for elem in root.findall("string"):
+                  if elem.attrib.get("name") == "admob_banner_unit_id":
+                      elem.text = banner_id
+              tree.write(strings_path, encoding="utf-8", xml_declaration=False)
+              print("Injected ADMOB_BANNER_UNIT_ID from GitHub Secret for release build.")
+          else:
+              tree = ET.parse(strings_path)
+              existing = ""
+              for elem in tree.getroot().findall("string"):
+                  if elem.attrib.get("name") == "admob_banner_unit_id":
+                      existing = (elem.text or "").strip()
+              if existing:
+                  print("Using admob_banner_unit_id from strings.xml for release build.")
+              else:
+                  print("Notice: admob_banner_unit_id is empty; Interstitial & Rewarded real ads are active, bottom banner is hidden until ADMOB_BANNER_UNIT_ID is configured.")
+          PY
+
+      - name: Build Signed Release APK & Play Bundle (when release keystore secrets exist)
         if: steps.keystore.outputs.has_release == 'true'
         env:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          gradle :app:assembleRelease
+          gradle :app:assembleRelease :app:bundleRelease --console=plain
           cp app/build/outputs/apk/release/app-release.apk SOGO-CHAT-AND-MEET.apk
+          cp app/build/outputs/bundle/release/app-release.aab SOGO-CHAT-AND-MEET.aab
 
       - name: Build Debug APK (fallback when release secrets are not configured)
         if: steps.keystore.outputs.has_release != 'true'
         run: |
-          gradle :app:assembleDebug
+          gradle :app:assembleDebug --console=plain
           cp app/build/outputs/apk/debug/app-debug.apk SOGO-CHAT-AND-MEET.apk
 
-      - name: Upload APK as Workflow Artifact
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v6
         with:
           name: SOGO-CHAT-AND-MEET-apk
-          path: SOGO-CHAT-AND-MEET.apk
+          path: SOGO-CHAT-AND-MEET.*
           retention-days: 30
 
       - name: Publish or Update Latest GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          HAS_RELEASE: ${{ steps.keystore.outputs.has_release }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -f latest "${{ github.sha }}"
           git push -f origin refs/tags/latest
 
-          RELEASE_NOTES="Automated Android APK build from commit \`${{ github.sha }}\` (package \`com.sogo.chatandmeet\`, Android 7.0+ / API 24+)."
+          if [ "$HAS_RELEASE" = "true" ]; then
+            BUILD_MODE="Signed Release APK + AAB (Live AdMob Production Ads Enabled)"
+          else
+            BUILD_MODE="Debug Fallback APK (Google Test Ads Only — add RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD secrets for Live AdMob Release)"
+          fi
+
+          RELEASE_NOTES="Automated Android build from commit \`${{ github.sha }}\` (package \`com.sogo.chatandmeet\`, Android 7.0+ / API 24+).
+
+**Build Mode:** ${BUILD_MODE}"
+
+          ASSETS=(SOGO-CHAT-AND-MEET.apk)
+          if [ -f SOGO-CHAT-AND-MEET.aab ]; then
+            ASSETS+=(SOGO-CHAT-AND-MEET.aab)
+          fi
+
           if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest SOGO-CHAT-AND-MEET.apk --clobber
+            gh release upload latest "${ASSETS[@]}" --clobber
             gh release edit latest \
               --title "SOGO CHAT AND MEET — Latest Android APK" \
               --notes "$RELEASE_NOTES" \
               --latest
           else
-            gh release create latest SOGO-CHAT-AND-MEET.apk \
+            gh release create latest "${ASSETS[@]}" \
               --title "SOGO CHAT AND MEET — Latest Android APK" \
               --notes "$RELEASE_NOTES" \
               --latest
@@ -229,9 +282,9 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG_NAME="${{ github.ref_name }}"
             if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-              gh release upload "$TAG_NAME" SOGO-CHAT-AND-MEET.apk --clobber
+              gh release upload "$TAG_NAME" "${ASSETS[@]}" --clobber
             else
-              gh release create "$TAG_NAME" SOGO-CHAT-AND-MEET.apk \
+              gh release create "$TAG_NAME" "${ASSETS[@]}" \
                 --title "SOGO CHAT AND MEET $TAG_NAME" \
                 --notes "$RELEASE_NOTES" \
                 --latest=false
