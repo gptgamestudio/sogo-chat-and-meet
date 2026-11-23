@@ -384,19 +384,31 @@ test("Messages: read receipt authorization - only receiver can mark as read, sen
   }));
 });
 
-test("Messages: messaging must fail when either participant has blocked the other", async () => {
+test("Messages: reading, listing, updating, and sending must fail when either participant has blocked the other, and restore after unblock", async () => {
   const now = new Date();
   const convId = "conv_alice_bob";
+  const blockId = `block_${BOB_UID}_${ALICE_UID}`;
   await testEnv.withSecurityRulesDisabled(async (context) => {
-    await context.firestore().collection("conversations").doc(convId).set({
+    const db = context.firestore();
+    await db.collection("conversations").doc(convId).set({
       conversationId: convId,
       participantUids: [ALICE_UID, BOB_UID],
       createdAt: now,
       updatedAt: now,
     });
+    await db.collection("conversations").doc(convId).collection("messages").doc("msg_existing").set({
+      messageId: "msg_existing",
+      conversationId: convId,
+      senderId: ALICE_UID,
+      receiverId: BOB_UID,
+      participantUids: [ALICE_UID, BOB_UID],
+      content: "Prior message before block",
+      type: "TEXT",
+      isRead: false,
+      createdAt: now,
+    });
     // Bob blocks Alice
-    const blockId = `block_${BOB_UID}_${ALICE_UID}`;
-    await context.firestore().collection("user_blocks").doc(blockId).set({
+    await db.collection("user_blocks").doc(blockId).set({
       blockId,
       blockerId: BOB_UID,
       blockedId: ALICE_UID,
@@ -406,6 +418,24 @@ test("Messages: messaging must fail when either participant has blocked the othe
 
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  // Neither participant can list or read messages while blocked
+  await assertFails(
+    aliceDb.collection("conversations").doc(convId).collection("messages")
+      .where("participantUids", "array-contains", ALICE_UID).get()
+  );
+  await assertFails(
+    bobDb.collection("conversations").doc(convId).collection("messages")
+      .where("participantUids", "array-contains", BOB_UID).get()
+  );
+  await assertFails(bobDb.collection("conversations").doc(convId).collection("messages").doc("msg_existing").get());
+
+  // Receiver Bob cannot mark blocked sender's message as read while blocked
+  await assertFails(
+    bobDb.collection("conversations").doc(convId).collection("messages").doc("msg_existing").update({
+      isRead: true,
+    })
+  );
 
   // Alice cannot send message to Bob because Bob blocked Alice
   await assertFails(aliceDb.collection("conversations").doc(convId).collection("messages").doc("msg_blocked_alice").set({
@@ -432,12 +462,37 @@ test("Messages: messaging must fail when either participant has blocked the othe
     isRead: false,
     createdAt: now,
   }));
+
+  // Bob unblocks Alice -> messaging and listing resume cleanly
+  await assertSucceeds(bobDb.collection("user_blocks").doc(blockId).delete());
+  await assertSucceeds(
+    bobDb.collection("conversations").doc(convId).collection("messages")
+      .where("participantUids", "array-contains", BOB_UID).get()
+  );
+  await assertSucceeds(aliceDb.collection("conversations").doc(convId).collection("messages").doc("msg_after_unblock").set({
+    messageId: "msg_after_unblock",
+    conversationId: convId,
+    senderId: ALICE_UID,
+    receiverId: BOB_UID,
+    participantUids: [ALICE_UID, BOB_UID],
+    content: "Glad we reconnected!",
+    type: "TEXT",
+    isRead: false,
+    createdAt: now,
+  }));
 });
 
 // 5. Blocks, Reports & Notifications
-test("Block: user can block another member and list own blocks", async () => {
+test("Block: user can block another member and list own blocks, cannot self-block", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
   const now = new Date();
+  await assertFails(aliceDb.collection("user_blocks").doc(`block_${ALICE_UID}_${ALICE_UID}`).set({
+    blockId: `block_${ALICE_UID}_${ALICE_UID}`,
+    blockerId: ALICE_UID,
+    blockedId: ALICE_UID,
+    createdAt: now,
+  }));
+
   await assertSucceeds(aliceDb.collection("user_blocks").doc("block1").set({
     blockId: "block1",
     blockerId: ALICE_UID,
@@ -1019,6 +1074,388 @@ test("Chat Messages: participants can react with emojis without altering other p
     reactions: { [CHARLIE_UID]: "😂" },
   }));
 });
+
+// 10. SOGO PRO Social, Gallery, Verification, Activities Photo/Comments/Reports & Messaging Tests
+test("SOGO PRO: member verification & account status are strictly owner-only; owner preserves display/age fields", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const ownerDb = testEnv.authenticatedContext("owner_admin_uid", {
+    email: "gptgamestudioph@gmail.com",
+    email_verified: true,
+    owner: true,
+    admin: true,
+  }).firestore();
+  const past = new Date(Date.now() - 1000);
+
+  // User cannot self-grant isVerifiedMember=true or set accountStatus=SUSPENDED at create
+  await assertFails(aliceDb.collection("users").doc(ALICE_UID).set({
+    userId: ALICE_UID,
+    displayName: "Alice",
+    age: 25,
+    gender: "Female",
+    country: "Philippines",
+    isVerifiedMember: true,
+    createdAt: past,
+    updatedAt: past,
+  }));
+
+  // Valid create with verificationStatus PENDING
+  await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).set({
+    userId: ALICE_UID,
+    username: "AlicePH25",
+    displayName: "Alice",
+    age: 25,
+    gender: "Female",
+    country: "Philippines",
+    verificationStatus: "PENDING",
+    accountStatus: "ACTIVE",
+    createdAt: past,
+    updatedAt: past,
+  }));
+
+  // User cannot update isVerifiedMember or accountStatus
+  await assertFails(aliceDb.collection("users").doc(ALICE_UID).update({
+    isVerifiedMember: true,
+    updatedAt: new Date(Date.now() - 500),
+  }));
+  await assertFails(aliceDb.collection("users").doc(ALICE_UID).update({
+    accountStatus: "SUSPENDED",
+    updatedAt: new Date(Date.now() - 500),
+  }));
+
+  // Verified Owner can update verification badge & account status
+  await assertSucceeds(ownerDb.collection("users").doc(ALICE_UID).update({
+    isVerifiedMember: true,
+    verificationStatus: "VERIFIED",
+    accountStatus: "ACTIVE",
+    updatedAt: new Date(Date.now() - 500),
+  }));
+
+  // Verified Owner cannot alter member displayName or bio
+  await assertFails(ownerDb.collection("users").doc(ALICE_UID).update({
+    displayName: "OwnerTampered",
+    updatedAt: new Date(Date.now() - 200),
+  }));
+});
+
+test("SOGO PRO Gallery & Social Graph: gallery_photos, user_follows, user_favorites, profile_likes, profile_visits", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const past = new Date(Date.now() - 1000);
+
+  // Gallery photos: owner creates/deletes, signed-in members read, third-party denied
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("gallery_photos").doc("photo_1").set({
+      photoId: "photo_1",
+      userId: ALICE_UID,
+      photoUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==",
+      caption: "BGC coffee",
+      createdAt: past,
+    })
+  );
+  await assertSucceeds(bobDb.collection("users").doc(ALICE_UID).collection("gallery_photos").get());
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).collection("gallery_photos").doc("photo_bob").set({
+      photoId: "photo_bob",
+      userId: BOB_UID,
+      photoUrl: "data:image/jpeg;base64,/9j/4AAQ",
+      createdAt: past,
+    })
+  );
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("gallery_photos").doc("photo_1").delete());
+
+  // Follows & Favorites: own-write enforced, anti-self-target enforced
+  await assertSucceeds(aliceDb.collection("user_follows").doc(`follow_${ALICE_UID}_${BOB_UID}`).set({
+    followId: `follow_${ALICE_UID}_${BOB_UID}`,
+    followerId: ALICE_UID,
+    followingId: BOB_UID,
+    createdAt: past,
+  }));
+  await assertFails(aliceDb.collection("user_follows").doc(`follow_${ALICE_UID}_${ALICE_UID}`).set({
+    followId: `follow_${ALICE_UID}_${ALICE_UID}`,
+    followerId: ALICE_UID,
+    followingId: ALICE_UID,
+    createdAt: past,
+  }));
+
+  await assertSucceeds(aliceDb.collection("user_favorites").doc(`fav_${ALICE_UID}_${BOB_UID}`).set({
+    favoriteId: `fav_${ALICE_UID}_${BOB_UID}`,
+    userId: ALICE_UID,
+    targetUserId: BOB_UID,
+    createdAt: past,
+  }));
+
+  // Profile likes & visits: recipient can read, sender creates, third-party denied
+  await assertSucceeds(aliceDb.collection("profile_likes").doc(`like_${ALICE_UID}_${BOB_UID}`).set({
+    likeId: `like_${ALICE_UID}_${BOB_UID}`,
+    likerId: ALICE_UID,
+    likedUserId: BOB_UID,
+    likerName: "Alice",
+    createdAt: past,
+  }));
+  await assertSucceeds(bobDb.collection("profile_likes").doc(`like_${ALICE_UID}_${BOB_UID}`).get());
+  await assertFails(charlieDb.collection("profile_likes").doc(`like_${ALICE_UID}_${BOB_UID}`).get());
+
+  await assertSucceeds(aliceDb.collection("profile_visits").doc(`visit_${ALICE_UID}_${BOB_UID}`).set({
+    visitId: `visit_${ALICE_UID}_${BOB_UID}`,
+    visitorId: ALICE_UID,
+    visitedUserId: BOB_UID,
+    visitorName: "Alice",
+    visitedAt: past,
+  }));
+  await assertSucceeds(bobDb.collection("profile_visits").doc(`visit_${ALICE_UID}_${BOB_UID}`).get());
+
+  // Clean up own records
+  await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).collection("gallery_photos").doc("photo_1").delete());
+  await assertSucceeds(aliceDb.collection("user_follows").doc(`follow_${ALICE_UID}_${BOB_UID}`).delete());
+  await assertSucceeds(aliceDb.collection("user_favorites").doc(`fav_${ALICE_UID}_${BOB_UID}`).delete());
+  await assertSucceeds(aliceDb.collection("profile_likes").doc(`like_${ALICE_UID}_${BOB_UID}`).delete());
+});
+
+test("SOGO PRO Activities: photo upload, comments, share counts, and activity_reports moderation", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const ownerDb = testEnv.authenticatedContext("owner_admin_uid", {
+    email: "gptgamestudioph@gmail.com",
+    email_verified: true,
+    owner: true,
+    admin: true,
+  }).firestore();
+  const past = new Date(Date.now() - 1000);
+  const postId = "post_pro_1";
+
+  await assertSucceeds(aliceDb.collection("activity_posts").doc(postId).set({
+    postId,
+    authorId: ALICE_UID,
+    authorName: "Alice",
+    authorUsername: "Alice28",
+    authorCountry: "Philippines",
+    authorVerified: true,
+    content: "Coffee time! ☕",
+    imageUrl: "data:image/jpeg;base64,/9j/4AAQ",
+    moodEmoji: "☕",
+    activityTag: "Coffee Time",
+    reactionCounts: {},
+    totalReactions: 0,
+    commentCount: 0,
+    shareCount: 0,
+    createdAt: past,
+    updatedAt: past,
+  }));
+
+  // Bob adds a comment and increments commentCount without altering content/reactions
+  await assertSucceeds(aliceDb.collection("activity_posts").doc(postId).collection("comments").doc("c_1").get());
+  await assertSucceeds(bobDb.collection("activity_posts").doc(postId).collection("comments").doc("c_1").set({
+    commentId: "c_1",
+    postId,
+    authorId: BOB_UID,
+    authorName: "Bob",
+    content: "Sarap ng kape!",
+    createdAt: past,
+  }));
+  await assertSucceeds(bobDb.collection("activity_posts").doc(postId).update({
+    commentCount: 1,
+    shareCount: 1,
+    updatedAt: new Date(Date.now() - 500),
+  }));
+
+  // Bob cannot alter post content along with shareCount
+  await assertFails(bobDb.collection("activity_posts").doc(postId).update({
+    content: "Altered text",
+    shareCount: 2,
+    updatedAt: new Date(Date.now() - 300),
+  }));
+
+  // Bob reports Alice's post; cannot mark REVIEWED himself, verified owner can
+  await assertSucceeds(bobDb.collection("activity_reports").doc("arep_1").set({
+    reportId: "arep_1",
+    reporterId: BOB_UID,
+    postId,
+    authorId: ALICE_UID,
+    postExcerpt: "Coffee time!",
+    reason: "Spam",
+    status: "PENDING",
+    createdAt: past,
+  }));
+  await assertFails(bobDb.collection("activity_reports").doc("arep_1").update({
+    status: "REVIEWED",
+  }));
+  await assertSucceeds(ownerDb.collection("activity_reports").doc("arep_1").update({
+    status: "REVIEWED",
+  }));
+});
+
+test("SOGO PRO Chat, Notifications & Audit Logs: IMAGE msgs, typing/unread, SAY_HI notifications, audit logs", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const ownerDb = testEnv.authenticatedContext("owner_admin_uid", {
+    email: "gptgamestudioph@gmail.com",
+    email_verified: true,
+    owner: true,
+    admin: true,
+  }).firestore();
+  const convId = `conv_${ALICE_UID}_${BOB_UID}`;
+  const past = new Date(Date.now() - 1000);
+
+  await assertSucceeds(aliceDb.collection("conversations").doc(convId).set({
+    conversationId: convId,
+    participantUids: [ALICE_UID, BOB_UID],
+    lastMessage: "Started a conversation",
+    lastMessageSenderId: ALICE_UID,
+    unreadCountByUid: { [ALICE_UID]: 0, [BOB_UID]: 0 },
+    typingByUid: {},
+    lastMessageTimestamp: past,
+    createdAt: past,
+    updatedAt: past,
+  }));
+
+  // Bob updates typingByUid and unreadCountByUid (Action 2) without changing lastMessage
+  await assertSucceeds(bobDb.collection("conversations").doc(convId).update({
+    typingByUid: { [BOB_UID]: new Date(Date.now() - 500) },
+    updatedAt: new Date(Date.now() - 500),
+  }));
+
+  // Alice sends an IMAGE message
+  await assertSucceeds(aliceDb.collection("conversations").doc(convId).collection("messages").doc("img_1").set({
+    messageId: "img_1",
+    conversationId: convId,
+    senderId: ALICE_UID,
+    receiverId: BOB_UID,
+    participantUids: [ALICE_UID, BOB_UID],
+    content: "Photo",
+    type: "IMAGE",
+    mediaUrl: "data:image/jpeg;base64,/9j/4AAQ",
+    isRead: false,
+    createdAt: past,
+  }));
+
+  // Cross-user SAY_HI / PROFILE_LIKE notification allowed when senderId == auth.uid; SYSTEM rejected
+  await assertSucceeds(aliceDb.collection("notifications").doc("notif_hi_1").set({
+    notificationId: "notif_hi_1",
+    userId: BOB_UID,
+    senderId: ALICE_UID,
+    title: "Alice waved at you!",
+    body: "Alice said Hi! Tap to chat.",
+    type: "SAY_HI",
+    isRead: false,
+    createdAt: past,
+  }));
+  await assertFails(aliceDb.collection("notifications").doc("notif_sys_1").set({
+    notificationId: "notif_sys_1",
+    userId: BOB_UID,
+    senderId: ALICE_UID,
+    title: "System alert",
+    body: "Fake admin alert",
+    type: "SYSTEM",
+    isRead: false,
+    createdAt: past,
+  }));
+
+  // Admin audit logs: verified owner creates/reads; regular user fails
+  await assertFails(aliceDb.collection("admin_audit_logs").doc("log_fake").set({
+    logId: "log_fake",
+    adminUid: ALICE_UID,
+    action: "VERIFY_MEMBER",
+    details: "Escalation",
+    createdAt: past,
+  }));
+  await assertSucceeds(ownerDb.collection("admin_audit_logs").doc("log_real").set({
+    logId: "log_real",
+    adminUid: "owner_admin_uid",
+    action: "VERIFY_MEMBER",
+    details: "Verified Alice",
+    createdAt: past,
+  }));
+});
+
+test("SOGO PRO Activities collection (/activities): create, self-only likes toggle, commentIds & comments subcollection", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const past = new Date(Date.now() - 1000);
+  const actId = "act_coffee_1";
+
+  // Impersonating another userId on create fails
+  await assertFails(bobDb.collection("activities").doc(actId).set({
+    postId: actId,
+    userId: ALICE_UID,
+    authorId: ALICE_UID,
+    username: "AlicePH",
+    activityType: "Coffee Time",
+    content: "Spoofed post",
+    likes: [],
+    commentIds: [],
+    timestamp: past,
+    createdAt: past,
+    updatedAt: past,
+  }));
+
+  // Valid ActivityPost create in /activities
+  await assertSucceeds(aliceDb.collection("activities").doc(actId).set({
+    postId: actId,
+    userId: ALICE_UID,
+    authorId: ALICE_UID,
+    username: "AlicePH",
+    authorName: "Alice",
+    authorVerified: true,
+    activityType: "Coffee Time",
+    activityTag: "Coffee Time",
+    moodEmoji: "☕",
+    content: "Morning brew in BGC!",
+    likes: [],
+    commentIds: [],
+    reactionCounts: {},
+    totalReactions: 0,
+    commentCount: 0,
+    shareCount: 0,
+    timestamp: past,
+    createdAt: past,
+    updatedAt: past,
+  }));
+
+  // Bob toggles his own UID into likes
+  await assertSucceeds(bobDb.collection("activities").doc(actId).update({
+    likes: [BOB_UID],
+    updatedAt: new Date(Date.now() - 800),
+  }));
+
+  // Charlie CANNOT inject ALICE_UID or remove BOB_UID from likes
+  await assertFails(charlieDb.collection("activities").doc(actId).update({
+    likes: [BOB_UID, ALICE_UID],
+    updatedAt: new Date(Date.now() - 700),
+  }));
+  await assertFails(charlieDb.collection("activities").doc(actId).update({
+    likes: [CHARLIE_UID],
+    updatedAt: new Date(Date.now() - 600),
+  }));
+
+  // Bob toggles his own UID out of likes cleanly
+  await assertSucceeds(bobDb.collection("activities").doc(actId).update({
+    likes: [],
+    updatedAt: new Date(Date.now() - 500),
+  }));
+
+  // Bob adds a comment and updates commentIds + commentCount
+  await assertSucceeds(bobDb.collection("activities").doc(actId).collection("comments").doc("cmt_1").set({
+    commentId: "cmt_1",
+    postId: actId,
+    authorId: BOB_UID,
+    authorName: "Bob",
+    content: "See you at BGC!",
+    createdAt: past,
+  }));
+  await assertSucceeds(bobDb.collection("activities").doc(actId).update({
+    commentIds: ["cmt_1"],
+    commentCount: 1,
+    updatedAt: new Date(Date.now() - 400),
+  }));
+
+  // Non-author Bob cannot delete Alice's activity post, Alice can
+  await assertFails(bobDb.collection("activities").doc(actId).delete());
+  await assertSucceeds(aliceDb.collection("activities").doc(actId).delete());
+});
+
+
 
 
 

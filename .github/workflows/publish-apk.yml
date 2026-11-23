@@ -259,8 +259,7 @@ jobs:
 
           RELEASE_NOTES="Automated Android build from commit \`${{ github.sha }}\` (package \`com.sogo.chatandmeet\`, Android 7.0+ / API 24+).
 
-
-            echo "**Build Mode:** ${BUILD_MODE}"
+**Build Mode:** ${BUILD_MODE}"
           ASSETS=(SOGO-CHAT-AND-MEET.apk)
           if [ -f SOGO-CHAT-AND-MEET.aab ]; then
             ASSETS+=(SOGO-CHAT-AND-MEET.aab)

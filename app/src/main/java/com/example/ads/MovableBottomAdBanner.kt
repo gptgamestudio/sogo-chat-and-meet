@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,6 +75,7 @@ import kotlin.math.roundToInt
 @Composable
 fun MovableBottomAdBanner(
     bannerUnitId: String,
+    defaultBottomPadding: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     if (bannerUnitId.isBlank()) return
@@ -125,7 +127,7 @@ fun MovableBottomAdBanner(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp + defaultBottomPadding),
             contentAlignment = Alignment.BottomCenter
         ) {
             Surface(

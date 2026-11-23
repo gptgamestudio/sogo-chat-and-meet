@@ -2,14 +2,20 @@ package com.example.data.repository
 
 import android.content.Context
 import com.example.R
+import com.example.data.model.ActivityComment
 import com.example.data.model.ActivityPost
 import com.example.data.model.BlockRecord
 import com.example.data.model.CallSession
 import com.example.data.model.ChatMessage
 import com.example.data.model.Conversation
+import com.example.data.model.FavoriteRecord
+import com.example.data.model.FollowRecord
 import com.example.data.model.FriendRequest
+import com.example.data.model.GalleryPhoto
 import com.example.data.model.IceCandidateRecord
 import com.example.data.model.NotificationRecord
+import com.example.data.model.ProfileLikeRecord
+import com.example.data.model.ProfileVisitorRecord
 import com.example.data.model.UserProfile
 import com.example.data.util.OperationType
 import com.example.data.util.handleFirestoreError
@@ -28,6 +34,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -46,9 +53,26 @@ interface SogoDataSource {
     fun observeCurrentUserProfile(userId: String): Flow<UserProfile?>
     fun observeMembers(): Flow<List<UserProfile>>
     suspend fun saveUserProfile(profile: UserProfile)
+    suspend fun updateProfilePhoto(photoUrl: String)
+    suspend fun updateCoverPhoto(photoUrl: String) {}
+    suspend fun updateDatingPreferencesAndPrivacy(
+        username: String?,
+        hobbies: List<String>,
+        lookingFor: String?,
+        preferredGender: String,
+        preferredMinAge: Int,
+        preferredMaxAge: Int,
+        preferredCountry: String,
+        hideFromDiscovery: Boolean,
+        hideOnlineStatus: Boolean,
+        hideAge: Boolean,
+        hideLocation: Boolean
+    ) {}
+    suspend fun requestMemberVerification() {}
     suspend fun updatePresence(isOnline: Boolean, force: Boolean = false)
     fun getConversationIdForUsers(otherUid: String): String
     fun observeConversations(): Flow<List<Conversation>>
+    fun observeConversation(conversationId: String): Flow<Conversation?> = emptyFlow()
     suspend fun ensureConversationExists(otherUid: String): String
     fun observeMessages(conversationId: String): Flow<List<ChatMessage>>
     suspend fun sendMessage(
@@ -59,11 +83,38 @@ interface SogoDataSource {
         mediaUrl: String? = null
     )
     suspend fun markMessageAsRead(conversationId: String, messageId: String)
+    suspend fun markConversationRead(conversationId: String) {}
+    suspend fun setTypingStatus(conversationId: String, isTyping: Boolean) {}
     suspend fun blockUser(blockedId: String)
+    suspend fun unblockUser(blockedId: String) {}
     fun observeBlockedUserIds(): Flow<Set<String>>
+    fun observeMyBlockedUserIds(): Flow<Set<String>> = emptyFlow()
     suspend fun reportUser(reportedId: String, reason: String, details: String?)
+    suspend fun reportChatContent(
+        conversationId: String,
+        message: ChatMessage,
+        reason: String,
+        details: String?
+    ) {}
+    fun isOwnerCandidateSignedIn(): Boolean = false
     fun observeNotifications(): Flow<List<NotificationRecord>>
     suspend fun markNotificationAsRead(notificationId: String)
+    suspend fun markAllNotificationsAsRead() {}
+
+    // --- Gallery Photos & Social Connections ---
+    fun observeGalleryPhotos(userId: String): Flow<List<GalleryPhoto>> = emptyFlow()
+    suspend fun addGalleryPhoto(photoUrl: String, caption: String? = null): String = ""
+    suspend fun deleteGalleryPhoto(photoId: String) {}
+    fun observeFollowingIds(): Flow<Set<String>> = emptyFlow()
+    suspend fun toggleFollow(targetUid: String, currentlyFollowing: Boolean) {}
+    fun observeFavoriteIds(): Flow<Set<String>> = emptyFlow()
+    suspend fun toggleFavorite(targetUid: String, currentlyFavorited: Boolean) {}
+    fun observeProfileLikesReceived(): Flow<List<ProfileLikeRecord>> = emptyFlow()
+    fun observeProfileLikesGiven(): Flow<Set<String>> = emptyFlow()
+    suspend fun toggleProfileLike(targetMember: UserProfile, myProfile: UserProfile?, currentlyLiked: Boolean) {}
+    fun observeProfileVisitors(): Flow<List<ProfileVisitorRecord>> = emptyFlow()
+    suspend fun recordProfileVisit(targetUid: String, myProfile: UserProfile?) {}
+    suspend fun sendSayHi(targetMember: UserProfile, myProfile: UserProfile?) {}
 
     // --- Friend Requests & Friends ---
     fun getFriendRequestIdForUsers(otherUid: String): String
@@ -92,17 +143,24 @@ interface SogoDataSource {
     )
     fun observeIceCandidates(callId: String): Flow<List<IceCandidateRecord>>
 
-    // --- Everyday Activities Community Feed & Emoji Reactions ---
-    fun observeActivityPosts(): Flow<List<ActivityPost>> = kotlinx.coroutines.flow.emptyFlow()
-    fun observeMyActivityReactions(): Flow<Map<String, String>> = kotlinx.coroutines.flow.emptyFlow()
+    // --- Everyday Activities Community Feed, Photo Upload, Comments, Shares & Emoji Reactions ---
+    fun observeActivityPosts(): Flow<List<ActivityPost>> = emptyFlow()
+    fun observeMyActivityReactions(): Flow<Map<String, String>> = emptyFlow()
     suspend fun createActivityPost(
         authorProfile: UserProfile?,
         content: String,
         moodEmoji: String,
-        activityTag: String
+        activityTag: String,
+        imageUrl: String? = null
     ): String = ""
+    suspend fun toggleActivityLike(postId: String) {}
     suspend fun toggleActivityReaction(postId: String, emoji: String) {}
     suspend fun deleteActivityPost(postId: String) {}
+    fun observeActivityComments(postId: String): Flow<List<ActivityComment>> = emptyFlow()
+    suspend fun addActivityComment(postId: String, authorProfile: UserProfile?, content: String) {}
+    suspend fun deleteActivityComment(postId: String, commentId: String) {}
+    suspend fun shareActivityPost(postId: String) {}
+    suspend fun reportActivityPost(post: ActivityPost, reason: String, details: String?) {}
     suspend fun toggleChatMessageReaction(conversationId: String, messageId: String, emoji: String) {}
 
     suspend fun deleteUserAccount(googleIdToken: String? = null)
@@ -121,6 +179,11 @@ class SogoRepository(
     private val lastCommittedPresenceByUid = ConcurrentHashMap<String, Boolean>()
 
     override fun getCurrentUserId(): String? = auth.currentUser?.uid
+
+    override fun isOwnerCandidateSignedIn(): Boolean {
+        val user = auth.currentUser ?: return false
+        return user.email.equals("gptgamestudioph@gmail.com", ignoreCase = true)
+    }
 
     override fun requireUserId(): String {
         return auth.currentUser?.uid
@@ -175,6 +238,7 @@ class SogoRepository(
     override suspend fun saveUserProfile(profile: UserProfile) {
         val uid = requireUserId()
         val safeDisplayName = profile.displayName.trim().ifBlank { "Member" }.take(50)
+        val safeUsername = profile.username?.trim()?.replace(Regex("[^a-zA-Z0-9_.]"), "")?.takeIf { it.isNotBlank() }?.take(32)
         val safeGender = profile.gender.trim().ifBlank { "Female" }.take(30)
         val safeCountry = profile.country.trim().ifBlank { "Philippines" }.take(60)
         val safeCity = profile.city?.trim()?.takeIf { it.isNotBlank() }?.take(60) ?: "Manila"
@@ -182,15 +246,28 @@ class SogoRepository(
         val safeBirthday = profile.birthday?.trim()?.takeIf { it.isNotBlank() }?.take(30)
         val safePersonality = profile.personality?.trim()?.takeIf { it.isNotBlank() }?.take(100)
         val safePhotoUrl = profile.photoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }
+        val safeCoverPhotoUrl = profile.coverPhotoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }
+        val safeLookingFor = profile.lookingFor?.trim()?.takeIf { it.isNotBlank() }?.take(60)
+        val safePreferredGender = profile.preferredGender.trim().takeIf {
+            it in setOf("ALL", "Female", "Male", "Non-Binary")
+        } ?: "ALL"
+        val safeMinAge = profile.preferredMinAge.coerceIn(18, 100)
+        val safeMaxAge = profile.preferredMaxAge.coerceIn(safeMinAge, 120)
+        val safePreferredCountry = profile.preferredCountry.trim().ifBlank { "ALL" }.take(60)
         val safeInterests = profile.interests
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(25)
+        val safeHobbies = profile.hobbies
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .distinct()
             .take(25)
 
         val docRef = db.collection("users").document(uid)
-        val payload = mutableMapOf<String, Any?>(
-            "userId" to uid,
+        val updatePayload = mutableMapOf<String, Any?>(
+            "username" to safeUsername,
             "displayName" to safeDisplayName,
             "birthday" to safeBirthday,
             "age" to profile.age,
@@ -200,7 +277,18 @@ class SogoRepository(
             "aboutMe" to safeAboutMe,
             "personality" to safePersonality,
             "photoUrl" to safePhotoUrl,
+            "coverPhotoUrl" to safeCoverPhotoUrl,
+            "hobbies" to safeHobbies,
             "interests" to safeInterests,
+            "lookingFor" to safeLookingFor,
+            "preferredGender" to safePreferredGender,
+            "preferredMinAge" to safeMinAge,
+            "preferredMaxAge" to safeMaxAge,
+            "preferredCountry" to safePreferredCountry,
+            "hideFromDiscovery" to profile.hideFromDiscovery,
+            "hideOnlineStatus" to profile.hideOnlineStatus,
+            "hideAge" to profile.hideAge,
+            "hideLocation" to profile.hideLocation,
             "isOnline" to true,
             "role" to "member",
             "lastActive" to FieldValue.serverTimestamp(),
@@ -210,16 +298,129 @@ class SogoRepository(
         try {
             val existing = docRef.get().await()
             if (!existing.exists()) {
-                payload["createdAt"] = FieldValue.serverTimestamp()
+                val createPayload = HashMap(updatePayload).apply {
+                    put("userId", uid)
+                    put("isVerifiedMember", false)
+                    put("verificationStatus", "NONE")
+                    put("accountStatus", "ACTIVE")
+                    put("createdAt", FieldValue.serverTimestamp())
+                }
+                docRef.set(createPayload).await()
             } else {
-                payload["createdAt"] = existing.getTimestamp("createdAt") ?: FieldValue.serverTimestamp()
+                // Update only allowed mutable keys so owner-granted verificationStatus & accountStatus remain intact
+                docRef.update(updatePayload).await()
             }
-            docRef.set(payload).await()
             lastCommittedPresenceByUid[uid] = true
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun updateProfilePhoto(photoUrl: String) {
+        val uid = requireUserId()
+        val safePhotoUrl = photoUrl.trim().takeIf { it.isNotBlank() && it.length <= 65000 }
+            ?: throw IllegalArgumentException("Selected photo is too large or invalid. Please try another photo.")
+        val docRef = db.collection("users").document(uid)
+        try {
+            val snapshot = docRef.get().await()
+            if (!snapshot.exists()) {
+                throw IllegalStateException("Please complete your profile setup before updating your profile picture.")
+            }
+            docRef.update(
+                mapOf(
+                    "photoUrl" to safePhotoUrl,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun updateCoverPhoto(photoUrl: String) {
+        val uid = requireUserId()
+        val safeCoverUrl = photoUrl.trim().takeIf { it.isNotBlank() && it.length <= 65000 }
+            ?: throw IllegalArgumentException("Selected cover photo is too large or invalid. Please try another photo.")
+        val docRef = db.collection("users").document(uid)
+        try {
+            docRef.update(
+                mapOf(
+                    "coverPhotoUrl" to safeCoverUrl,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun updateDatingPreferencesAndPrivacy(
+        username: String?,
+        hobbies: List<String>,
+        lookingFor: String?,
+        preferredGender: String,
+        preferredMinAge: Int,
+        preferredMaxAge: Int,
+        preferredCountry: String,
+        hideFromDiscovery: Boolean,
+        hideOnlineStatus: Boolean,
+        hideAge: Boolean,
+        hideLocation: Boolean
+    ) {
+        val uid = requireUserId()
+        val safeUsername = username?.trim()?.replace(Regex("[^a-zA-Z0-9_.]"), "")?.takeIf { it.isNotBlank() }?.take(32)
+        val safeMinAge = preferredMinAge.coerceIn(18, 100)
+        val safeMaxAge = preferredMaxAge.coerceIn(safeMinAge, 120)
+        val safeGender = preferredGender.takeIf { it in setOf("ALL", "Female", "Male", "Non-Binary") } ?: "ALL"
+        val docRef = db.collection("users").document(uid)
+        try {
+            docRef.update(
+                mapOf(
+                    "username" to safeUsername,
+                    "hobbies" to hobbies.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(25),
+                    "lookingFor" to lookingFor?.trim()?.takeIf { it.isNotBlank() }?.take(60),
+                    "preferredGender" to safeGender,
+                    "preferredMinAge" to safeMinAge,
+                    "preferredMaxAge" to safeMaxAge,
+                    "preferredCountry" to preferredCountry.trim().ifBlank { "ALL" }.take(60),
+                    "hideFromDiscovery" to hideFromDiscovery,
+                    "hideOnlineStatus" to hideOnlineStatus,
+                    "hideAge" to hideAge,
+                    "hideLocation" to hideLocation,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun requestMemberVerification() {
+        val uid = requireUserId()
+        val docRef = db.collection("users").document(uid)
+        try {
+            docRef.update(
+                mapOf(
+                    "verificationStatus" to "PENDING",
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
             throw e
         }
     }
@@ -289,8 +490,40 @@ class SogoRepository(
             .collect { emit(it) }
     }
 
+    override fun observeConversation(conversationId: String): Flow<Conversation?> = flow {
+        requireUserId()
+        if (conversationId.isBlank()) {
+            emit(null)
+            return@flow
+        }
+        val path = "conversations/$conversationId"
+        db.collection("conversations").document(conversationId)
+            .snapshots()
+            .map { snapshot -> snapshot.toObject(Conversation::class.java) }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.GET, path)
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
     override suspend fun ensureConversationExists(otherUid: String): String {
         val uid = requireUserId()
+        if (otherUid.isBlank() || otherUid == uid) {
+            throw IllegalArgumentException("Invalid conversation partner.")
+        }
+        val myBlockSnap = runCatching {
+            db.collection("user_blocks").document("block_${uid}_${otherUid}").get().await()
+        }.getOrNull()
+        val theirBlockSnap = runCatching {
+            db.collection("user_blocks").document("block_${otherUid}_${uid}").get().await()
+        }.getOrNull()
+        if (myBlockSnap?.exists() == true || theirBlockSnap?.exists() == true) {
+            throw IllegalStateException("Chat is restricted because one of you has blocked the other.")
+        }
+
         val convId = getConversationIdForUsers(otherUid)
         val docRef = db.collection("conversations").document(convId)
         try {
@@ -302,6 +535,8 @@ class SogoRepository(
                     "participantUids" to participants,
                     "lastMessage" to "Started a conversation",
                     "lastMessageSenderId" to uid,
+                    "unreadCountByUid" to mapOf(uid to 0L, otherUid to 0L),
+                    "typingByUid" to emptyMap<String, Any?>(),
                     "lastMessageTimestamp" to FieldValue.serverTimestamp(),
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
@@ -349,7 +584,7 @@ class SogoRepository(
             .collection("messages").document(messageId)
 
         val safeContent = content.trim().take(2000)
-        val safeMediaUrl = mediaUrl?.trim()?.takeIf { it.isNotBlank() }?.take(1000)
+        val safeMediaUrl = mediaUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }
 
         val messagePayload = mutableMapOf<String, Any?>(
             "messageId" to messageId,
@@ -384,6 +619,8 @@ class SogoRepository(
                         "lastMessage" to snippet,
                         "lastMessageSenderId" to uid,
                         "lastMessageTimestamp" to FieldValue.serverTimestamp(),
+                        "unreadCountByUid.$receiverId" to FieldValue.increment(1L),
+                        "typingByUid.$uid" to FieldValue.delete(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
@@ -418,10 +655,45 @@ class SogoRepository(
         }
     }
 
+    override suspend fun markConversationRead(conversationId: String) {
+        val uid = auth.currentUser?.uid ?: return
+        if (conversationId.isBlank()) return
+        val convRef = db.collection("conversations").document(conversationId)
+        try {
+            convRef.update(
+                mapOf(
+                    "unreadCountByUid.$uid" to 0L,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
+    override suspend fun setTypingStatus(conversationId: String, isTyping: Boolean) {
+        val uid = auth.currentUser?.uid ?: return
+        if (conversationId.isBlank()) return
+        val convRef = db.collection("conversations").document(conversationId)
+        try {
+            convRef.update(
+                mapOf(
+                    "typingByUid.$uid" to if (isTyping) FieldValue.serverTimestamp() else FieldValue.delete(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
     // --- Safety: Blocking & Reporting ---
 
     override suspend fun blockUser(blockedId: String) {
         val uid = requireUserId()
+        if (blockedId.isBlank() || blockedId == uid) return
         val blockId = "block_${uid}_${blockedId}"
         val primaryDoc = db.collection("user_blocks").document(blockId)
         val aliasDoc = db.collection("blocks").document(blockId)
@@ -433,11 +705,35 @@ class SogoRepository(
         )
         try {
             primaryDoc.set(payload).await()
-            try { aliasDoc.set(payload).await() } catch (_: Exception) {}
+            try { aliasDoc.set(payload).await() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+            // Remove any existing friend request or friendship between the two users
+            try {
+                val friendReqId = getFriendRequestIdForUsers(blockedId)
+                db.collection("friend_requests").document(friendReqId).delete().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {}
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, primaryDoc.path)
+            throw e
+        }
+    }
+
+    override suspend fun unblockUser(blockedId: String) {
+        val uid = requireUserId()
+        if (blockedId.isBlank() || blockedId == uid) return
+        val blockId = "block_${uid}_${blockedId}"
+        val primaryDoc = db.collection("user_blocks").document(blockId)
+        val aliasDoc = db.collection("blocks").document(blockId)
+        try {
+            primaryDoc.delete().await()
+            try { aliasDoc.delete().await() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, primaryDoc.path)
             throw e
         }
     }
@@ -489,6 +785,30 @@ class SogoRepository(
         }
     }
 
+    override fun observeMyBlockedUserIds(): Flow<Set<String>> = callbackFlow {
+        val uid = requireUserId()
+        val registration = db.collection("user_blocks")
+            .whereEqualTo("blockerId", uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    if (auth.currentUser != null) {
+                        handleFirestoreError(error, OperationType.LIST, "user_blocks")
+                        close(error)
+                    } else {
+                        close()
+                    }
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val myBlocks = snapshot.toObjects(BlockRecord::class.java)
+                        .mapNotNull { it.blockedId.takeIf(String::isNotBlank) }
+                        .toSet()
+                    trySend(myBlocks)
+                }
+            }
+        awaitClose { registration.remove() }
+    }
+
     override suspend fun reportUser(reportedId: String, reason: String, details: String?) {
         val uid = requireUserId()
         val reportId = "report_${UUID.randomUUID()}"
@@ -517,6 +837,55 @@ class SogoRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, primaryDoc.path)
+            throw e
+        }
+    }
+
+    override suspend fun reportChatContent(
+        conversationId: String,
+        message: ChatMessage,
+        reason: String,
+        details: String?
+    ) {
+        val uid = requireUserId()
+        val reportedUid = message.senderId.ifBlank {
+            message.participantUids.firstOrNull { it != uid }.orEmpty()
+        }
+        if (reportedUid.isBlank() || reportedUid == uid) {
+            throw IllegalArgumentException("You can only report content sent by another member.")
+        }
+        if (conversationId.isBlank() || message.messageId.isBlank()) {
+            throw IllegalArgumentException("Missing conversation or message identifier.")
+        }
+
+        val reportId = "creport_${UUID.randomUUID()}"
+        val docRef = db.collection("content_reports").document(reportId)
+        val safeExcerpt = message.content.trim().ifBlank { "[${message.type} attachment]" }.take(500)
+        val safeType = message.type.trim().uppercase().takeIf {
+            it in setOf("TEXT", "IMAGE", "VOICE", "STICKER")
+        } ?: "TEXT"
+        val payload = mutableMapOf<String, Any?>(
+            "reportId" to reportId,
+            "reporterId" to uid,
+            "reportedUserId" to reportedUid,
+            "conversationId" to conversationId.trim().take(128),
+            "messageId" to message.messageId.trim().take(128),
+            "messageType" to safeType,
+            "messageExcerpt" to safeExcerpt,
+            "reason" to reason.trim().ifBlank { "Inappropriate content" }.take(100),
+            "status" to "PENDING",
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        val safeDetails = details?.trim()?.takeIf { it.isNotBlank() }?.take(1000)
+        if (safeDetails != null) {
+            payload["details"] = safeDetails
+        }
+        try {
+            docRef.set(payload).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
             throw e
         }
     }
@@ -551,6 +920,367 @@ class SogoRepository(
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docRef.path)
         }
+    }
+
+    override suspend fun markAllNotificationsAsRead() {
+        val uid = requireUserId()
+        try {
+            val snap = db.collection("notifications")
+                .whereEqualTo("userId", uid)
+                .limit(NOTIFICATIONS_LIMIT)
+                .get()
+                .await()
+            snap.documents.forEach { doc ->
+                if (doc.getBoolean("isRead") == false) {
+                    try {
+                        doc.reference.update("isRead", true).await()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {}
+    }
+
+    private suspend fun createCrossUserNotification(
+        targetUid: String,
+        type: String,
+        title: String,
+        body: String,
+        data: String? = null
+    ) {
+        val uid = auth.currentUser?.uid ?: return
+        if (targetUid.isBlank() || targetUid == uid) return
+        val notifId = "notif_${UUID.randomUUID().toString().replace("-", "")}"
+        val payload = mutableMapOf<String, Any?>(
+            "notificationId" to notifId,
+            "userId" to targetUid,
+            "senderId" to uid,
+            "title" to title.trim().ifBlank { "SOGO Activity" }.take(100),
+            "body" to body.trim().ifBlank { "Tap to view" }.take(500),
+            "type" to type,
+            "isRead" to false,
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        if (!data.isNullOrBlank()) {
+            payload["data"] = data.take(500)
+        }
+        try {
+            db.collection("notifications").document(notifId).set(payload).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {}
+    }
+
+    // --- Gallery Photos & Social Connections ---
+
+    override fun observeGalleryPhotos(userId: String): Flow<List<GalleryPhoto>> = flow {
+        requireUserId()
+        if (userId.isBlank()) {
+            emit(emptyList())
+            return@flow
+        }
+        val path = "users/$userId/gallery_photos"
+        db.collection("users").document(userId).collection("gallery_photos")
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(30L)
+            .snapshots()
+            .map { snap -> snap.toObjects(GalleryPhoto::class.java) }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun addGalleryPhoto(photoUrl: String, caption: String?): String {
+        val uid = requireUserId()
+        val safeUrl = photoUrl.trim().takeIf { it.isNotBlank() && it.length <= 65000 }
+            ?: throw IllegalArgumentException("Selected gallery photo is too large or invalid.")
+        val photoId = "gphoto_${UUID.randomUUID().toString().replace("-", "")}"
+        val docRef = db.collection("users").document(uid).collection("gallery_photos").document(photoId)
+        val payload = mutableMapOf<String, Any?>(
+            "photoId" to photoId,
+            "userId" to uid,
+            "photoUrl" to safeUrl,
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        caption?.trim()?.takeIf { it.isNotBlank() }?.take(200)?.let {
+            payload["caption"] = it
+        }
+        try {
+            docRef.set(payload).await()
+            return photoId
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun deleteGalleryPhoto(photoId: String) {
+        val uid = requireUserId()
+        if (photoId.isBlank()) return
+        val docRef = db.collection("users").document(uid).collection("gallery_photos").document(photoId)
+        try {
+            docRef.delete().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docRef.path)
+            throw e
+        }
+    }
+
+    override fun observeFollowingIds(): Flow<Set<String>> = flow {
+        val uid = requireUserId()
+        db.collection("user_follows")
+            .whereEqualTo("followerId", uid)
+            .limit(150L)
+            .snapshots()
+            .map { snap ->
+                snap.toObjects(FollowRecord::class.java)
+                    .mapNotNull { it.followingId.takeIf(String::isNotBlank) }
+                    .toSet()
+            }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, "user_follows")
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun toggleFollow(targetUid: String, currentlyFollowing: Boolean) {
+        val uid = requireUserId()
+        if (targetUid.isBlank() || targetUid == uid) return
+        val followId = "follow_${uid}_${targetUid}"
+        val docRef = db.collection("user_follows").document(followId)
+        try {
+            if (currentlyFollowing) {
+                docRef.delete().await()
+            } else {
+                docRef.set(
+                    mapOf(
+                        "followId" to followId,
+                        "followerId" to uid,
+                        "followingId" to targetUid,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    override fun observeFavoriteIds(): Flow<Set<String>> = flow {
+        val uid = requireUserId()
+        db.collection("user_favorites")
+            .whereEqualTo("userId", uid)
+            .limit(150L)
+            .snapshots()
+            .map { snap ->
+                snap.toObjects(FavoriteRecord::class.java)
+                    .mapNotNull { it.targetUserId.takeIf(String::isNotBlank) }
+                    .toSet()
+            }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, "user_favorites")
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun toggleFavorite(targetUid: String, currentlyFavorited: Boolean) {
+        val uid = requireUserId()
+        if (targetUid.isBlank() || targetUid == uid) return
+        val favId = "fav_${uid}_${targetUid}"
+        val docRef = db.collection("user_favorites").document(favId)
+        try {
+            if (currentlyFavorited) {
+                docRef.delete().await()
+            } else {
+                docRef.set(
+                    mapOf(
+                        "favoriteId" to favId,
+                        "userId" to uid,
+                        "targetUserId" to targetUid,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    override fun observeProfileLikesReceived(): Flow<List<ProfileLikeRecord>> = flow {
+        val uid = requireUserId()
+        db.collection("profile_likes")
+            .whereEqualTo("likedUserId", uid)
+            .limit(150L)
+            .snapshots()
+            .map { snap ->
+                snap.toObjects(ProfileLikeRecord::class.java)
+                    .sortedByDescending { it.createdAt?.toDate()?.time ?: 0L }
+            }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, "profile_likes")
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override fun observeProfileLikesGiven(): Flow<Set<String>> = flow {
+        val uid = requireUserId()
+        db.collection("profile_likes")
+            .whereEqualTo("likerId", uid)
+            .limit(150L)
+            .snapshots()
+            .map { snap ->
+                snap.toObjects(ProfileLikeRecord::class.java)
+                    .mapNotNull { it.likedUserId.takeIf(String::isNotBlank) }
+                    .toSet()
+            }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, "profile_likes")
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun toggleProfileLike(
+        targetMember: UserProfile,
+        myProfile: UserProfile?,
+        currentlyLiked: Boolean
+    ) {
+        val uid = requireUserId()
+        val targetUid = targetMember.userId
+        if (targetUid.isBlank() || targetUid == uid) return
+        val likeId = "like_${uid}_${targetUid}"
+        val docRef = db.collection("profile_likes").document(likeId)
+        try {
+            if (currentlyLiked) {
+                docRef.delete().await()
+            } else {
+                val payload = mutableMapOf<String, Any?>(
+                    "likeId" to likeId,
+                    "likerId" to uid,
+                    "likedUserId" to targetUid,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                myProfile?.displayName?.trim()?.takeIf { it.isNotBlank() }?.take(60)?.let {
+                    payload["likerName"] = it
+                }
+                myProfile?.photoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }?.let {
+                    payload["likerPhotoUrl"] = it
+                }
+                docRef.set(payload).await()
+                val senderLabel = myProfile?.displayName?.trim()?.ifBlank { "A member" } ?: "A member"
+                createCrossUserNotification(
+                    targetUid = targetUid,
+                    type = "PROFILE_LIKE",
+                    title = "❤️ $senderLabel liked your profile!",
+                    body = "$senderLabel gave your SOGO profile a like.",
+                    data = uid
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            throw e
+        }
+    }
+
+    override fun observeProfileVisitors(): Flow<List<ProfileVisitorRecord>> = flow {
+        val uid = requireUserId()
+        db.collection("profile_visits")
+            .whereEqualTo("visitedUserId", uid)
+            .limit(100L)
+            .snapshots()
+            .map { snap ->
+                snap.toObjects(ProfileVisitorRecord::class.java)
+                    .sortedByDescending { it.visitedAt?.toDate()?.time ?: 0L }
+            }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, "profile_visits")
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun recordProfileVisit(targetUid: String, myProfile: UserProfile?) {
+        val uid = auth.currentUser?.uid ?: return
+        if (targetUid.isBlank() || targetUid == uid) return
+        val visitId = "visit_${uid}_${targetUid}"
+        val docRef = db.collection("profile_visits").document(visitId)
+        val visitorName = myProfile?.displayName?.trim()?.ifBlank { "Member" }?.take(60) ?: "Member"
+        val payload = mutableMapOf<String, Any?>(
+            "visitId" to visitId,
+            "visitorId" to uid,
+            "visitedUserId" to targetUid,
+            "visitorName" to visitorName,
+            "visitedAt" to FieldValue.serverTimestamp()
+        )
+        myProfile?.photoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }?.let {
+            payload["visitorPhotoUrl"] = it
+        }
+        try {
+            docRef.set(payload).await()
+            createCrossUserNotification(
+                targetUid = targetUid,
+                type = "PROFILE_VISIT",
+                title = "👀 $visitorName visited your profile",
+                body = "$visitorName checked out your profile on SOGO CHAT & MEET.",
+                data = uid
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
+
+    override suspend fun sendSayHi(targetMember: UserProfile, myProfile: UserProfile?) {
+        val uid = requireUserId()
+        val targetUid = targetMember.userId
+        if (targetUid.isBlank() || targetUid == uid) return
+        val convId = ensureConversationExists(targetUid)
+        sendMessage(
+            conversationId = convId,
+            receiverId = targetUid,
+            content = "👋 Hi ${targetMember.displayName}! Let's chat and be friends!",
+            type = "TEXT"
+        )
+        val senderLabel = myProfile?.displayName?.trim()?.ifBlank { "Someone" } ?: "Someone"
+        createCrossUserNotification(
+            targetUid = targetUid,
+            type = "SAY_HI",
+            title = "👋 $senderLabel said Hi!",
+            body = "$senderLabel sent you a friendly wave. Open chat to reply!",
+            data = convId
+        )
     }
 
     // --- Friend Requests & Friends ---
@@ -610,6 +1340,13 @@ class SogoRepository(
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             docRef.set(payload).await()
+            createCrossUserNotification(
+                targetUid = targetUid,
+                type = "FRIEND_REQUEST",
+                title = "🤝 New Friend Request",
+                body = "A SOGO member wants to connect with you as a friend!",
+                data = uid
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -793,12 +1530,12 @@ class SogoRepository(
             .collect { emit(it) }
     }
 
-    // --- Everyday Activities Community Feed & Emoji Reactions ---
+    // --- Everyday Activities Community Feed, Likes, Comments, Photo Upload & Emoji Reactions ---
 
     override fun observeActivityPosts(): Flow<List<ActivityPost>> = flow {
         requireUserId()
-        val path = "activity_posts"
-        db.collection("activity_posts")
+        val path = ACTIVITIES_COLLECTION
+        db.collection(ACTIVITIES_COLLECTION)
             .orderBy("createdAt", Query.Direction.DESCENDING)
             .limit(ACTIVITY_POSTS_LIMIT)
             .snapshots()
@@ -839,31 +1576,54 @@ class SogoRepository(
         authorProfile: UserProfile?,
         content: String,
         moodEmoji: String,
-        activityTag: String
+        activityTag: String,
+        imageUrl: String?
     ): String {
         val uid = requireUserId()
         val trimmedContent = content.trim().take(500)
         require(trimmedContent.isNotEmpty()) { "Activity post cannot be empty." }
 
         val postId = "post_${UUID.randomUUID().toString().replace("-", "")}"
-        val docRef = db.collection("activity_posts").document(postId)
+        val docRef = db.collection(ACTIVITIES_COLLECTION).document(postId)
+        val cleanAuthorName = (authorProfile?.displayName?.trim()?.ifBlank { "SOGO Member" } ?: "SOGO Member").take(60)
+        val cleanUsername = (authorProfile?.username?.trim()?.takeIf { it.isNotBlank() } ?: cleanAuthorName).take(60)
+        val cleanActivityType = activityTag.trim().ifBlank { "General Activities" }.take(40)
+        val cleanMoodEmoji = moodEmoji.trim().ifBlank { "✨" }.take(16)
         val payload = mutableMapOf<String, Any?>(
             "postId" to postId,
+            "userId" to uid,
             "authorId" to uid,
-            "authorName" to (authorProfile?.displayName?.trim()?.ifBlank { "SOGO Member" } ?: "SOGO Member").take(60),
+            "username" to cleanUsername,
+            "authorName" to cleanAuthorName,
+            "authorVerified" to (authorProfile?.isVerifiedMember ?: false),
+            "activityType" to cleanActivityType,
+            "activityTag" to cleanActivityType,
+            "moodEmoji" to cleanMoodEmoji,
             "content" to trimmedContent,
-            "moodEmoji" to moodEmoji.trim().ifBlank { "✨" }.take(16),
-            "activityTag" to activityTag.trim().ifBlank { "Daily Moment" }.take(40),
+            "likes" to emptyList<String>(),
+            "commentIds" to emptyList<String>(),
             "reactionCounts" to emptyMap<String, Long>(),
             "totalReactions" to 0L,
+            "commentCount" to 0L,
+            "shareCount" to 0L,
+            "timestamp" to FieldValue.serverTimestamp(),
             "createdAt" to FieldValue.serverTimestamp(),
             "updatedAt" to FieldValue.serverTimestamp()
         )
+        authorProfile?.username?.trim()?.takeIf { it.isNotBlank() }?.take(32)?.let {
+            payload["authorUsername"] = it
+        }
         authorProfile?.photoUrl?.takeIf { it.isNotBlank() && it.length <= 65000 }?.let {
             payload["authorPhotoUrl"] = it
         }
         if (!authorProfile?.city.isNullOrBlank()) {
             payload["authorCity"] = authorProfile?.city?.take(60)
+        }
+        if (!authorProfile?.country.isNullOrBlank()) {
+            payload["authorCountry"] = authorProfile?.country?.take(60)
+        }
+        imageUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }?.let {
+            payload["imageUrl"] = it
         }
 
         try {
@@ -877,12 +1637,47 @@ class SogoRepository(
         }
     }
 
+    override suspend fun toggleActivityLike(postId: String) {
+        val uid = requireUserId()
+        if (postId.isBlank()) return
+        val postRef = db.collection(ACTIVITIES_COLLECTION).document(postId)
+        try {
+            db.runTransaction { transaction ->
+                val postSnap = transaction.get(postRef)
+                if (!postSnap.exists()) return@runTransaction null
+                val currentLikes = (postSnap.get("likes") as? List<*>)
+                    ?.filterIsInstance<String>()
+                    ?.distinct()
+                    ?.toMutableList()
+                    ?: mutableListOf()
+                if (currentLikes.contains(uid)) {
+                    currentLikes.remove(uid)
+                } else {
+                    currentLikes.add(uid)
+                }
+                transaction.update(
+                    postRef,
+                    mapOf(
+                        "likes" to currentLikes,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                null
+            }.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, postRef.path)
+            throw e
+        }
+    }
+
     override suspend fun toggleActivityReaction(postId: String, emoji: String) {
         val uid = requireUserId()
         val cleanEmoji = emoji.trim().take(16)
         if (cleanEmoji.isEmpty()) return
 
-        val postRef = db.collection("activity_posts").document(postId)
+        val postRef = db.collection(ACTIVITIES_COLLECTION).document(postId)
         val reactionRef = db.collection("users").document(uid)
             .collection("activity_reactions").document(postId)
 
@@ -959,7 +1754,7 @@ class SogoRepository(
 
     override suspend fun deleteActivityPost(postId: String) {
         val uid = requireUserId()
-        val postRef = db.collection("activity_posts").document(postId)
+        val postRef = db.collection(ACTIVITIES_COLLECTION).document(postId)
         val ownReactionRef = db.collection("users").document(uid)
             .collection("activity_reactions").document(postId)
         try {
@@ -973,6 +1768,150 @@ class SogoRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, postRef.path)
+            throw e
+        }
+    }
+
+    override fun observeActivityComments(postId: String): Flow<List<ActivityComment>> = flow {
+        requireUserId()
+        if (postId.isBlank()) {
+            emit(emptyList())
+            return@flow
+        }
+        val path = "$ACTIVITIES_COLLECTION/$postId/comments"
+        db.collection(ACTIVITIES_COLLECTION).document(postId).collection("comments")
+            .orderBy("createdAt", Query.Direction.ASCENDING)
+            .limit(100L)
+            .snapshots()
+            .map { snap -> snap.toObjects(ActivityComment::class.java) }
+            .catch { error ->
+                if (error !is CancellationException && auth.currentUser != null) {
+                    handleFirestoreError(error, OperationType.LIST, path)
+                }
+                throw error
+            }
+            .collect { emit(it) }
+    }
+
+    override suspend fun addActivityComment(
+        postId: String,
+        authorProfile: UserProfile?,
+        content: String
+    ) {
+        val uid = requireUserId()
+        val trimmed = content.trim().take(500)
+        require(trimmed.isNotEmpty()) { "Comment cannot be empty." }
+        val commentId = "cmt_${UUID.randomUUID().toString().replace("-", "")}"
+        val postRef = db.collection(ACTIVITIES_COLLECTION).document(postId)
+        val commentRef = postRef.collection("comments").document(commentId)
+        val payload = mutableMapOf<String, Any?>(
+            "commentId" to commentId,
+            "postId" to postId,
+            "authorId" to uid,
+            "authorName" to (authorProfile?.displayName?.trim()?.ifBlank { "Member" } ?: "Member").take(60),
+            "content" to trimmed,
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        authorProfile?.photoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }?.let {
+            payload["authorPhotoUrl"] = it
+        }
+        try {
+            commentRef.set(payload).await()
+            postRef.update(
+                mapOf(
+                    "commentIds" to FieldValue.arrayUnion(commentId),
+                    "commentCount" to FieldValue.increment(1L),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, commentRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun deleteActivityComment(postId: String, commentId: String) {
+        requireUserId()
+        val postRef = db.collection(ACTIVITIES_COLLECTION).document(postId)
+        val commentRef = postRef.collection("comments").document(commentId)
+        try {
+            commentRef.delete().await()
+            db.runTransaction { tx ->
+                val postSnap = tx.get(postRef)
+                val current = postSnap.getLong("commentCount") ?: 0L
+                val existingIds = (postSnap.get("commentIds") as? List<*>)
+                    ?.filterIsInstance<String>()
+                    ?.filterNot { it == commentId }
+                    ?: emptyList()
+                tx.update(
+                    postRef,
+                    mapOf(
+                        "commentIds" to existingIds,
+                        "commentCount" to (current - 1L).coerceAtLeast(0L),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                null
+            }.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, commentRef.path)
+            throw e
+        }
+    }
+
+    override suspend fun shareActivityPost(postId: String) {
+        requireUserId()
+        if (postId.isBlank()) return
+        val postRef = db.collection(ACTIVITIES_COLLECTION).document(postId)
+        try {
+            postRef.update(
+                mapOf(
+                    "shareCount" to FieldValue.increment(1L),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, postRef.path)
+        }
+    }
+
+    override suspend fun reportActivityPost(
+        post: ActivityPost,
+        reason: String,
+        details: String?
+    ) {
+        val uid = requireUserId()
+        val postOwnerId = post.resolvedUserId
+        if (postOwnerId == uid || postOwnerId.isBlank()) {
+            throw IllegalArgumentException("You cannot report your own post.")
+        }
+        val reportId = "areport_${UUID.randomUUID().toString().replace("-", "")}"
+        val docRef = db.collection("activity_reports").document(reportId)
+        val payload = mutableMapOf<String, Any?>(
+            "reportId" to reportId,
+            "reporterId" to uid,
+            "postId" to post.resolvedPostId,
+            "authorId" to postOwnerId,
+            "postExcerpt" to post.content.trim().ifBlank { "[Activity photo]" }.take(500),
+            "reason" to reason.trim().ifBlank { "Inappropriate content" }.take(100),
+            "status" to "PENDING",
+            "createdAt" to FieldValue.serverTimestamp()
+        )
+        details?.trim()?.takeIf { it.isNotBlank() }?.take(1000)?.let {
+            payload["details"] = it
+        }
+        try {
+            docRef.set(payload).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
             throw e
         }
     }
@@ -1108,6 +2047,19 @@ class SogoRepository(
                 } catch (_: Exception) {}
             }
 
+            val ownActivities = try {
+                db.collection(ACTIVITIES_COLLECTION).whereEqualTo("userId", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) { null }
+            ownActivities?.documents?.forEach { doc ->
+                try {
+                    doc.reference.delete().await()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {}
+            }
+
             val ownActivityPosts = try {
                 db.collection("activity_posts").whereEqualTo("authorId", uid).get().await()
             } catch (e: CancellationException) {
@@ -1132,6 +2084,42 @@ class SogoRepository(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {}
+            }
+
+            val ownGalleryPhotos = try {
+                db.collection("users").document(uid).collection("gallery_photos").get().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) { null }
+            ownGalleryPhotos?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+            }
+
+            val ownFollows = try {
+                db.collection("user_follows").whereEqualTo("followerId", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) { null }
+            ownFollows?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+            }
+
+            val ownFavorites = try {
+                db.collection("user_favorites").whereEqualTo("userId", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) { null }
+            ownFavorites?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+            }
+
+            val ownProfileLikes = try {
+                db.collection("profile_likes").whereEqualTo("likerId", uid).get().await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) { null }
+            ownProfileLikes?.documents?.forEach { doc ->
+                try { doc.reference.delete().await() } catch (e: CancellationException) { throw e } catch (_: Exception) {}
             }
 
             docRef.delete().await()
@@ -1164,6 +2152,7 @@ class SogoRepository(
         private const val FRIEND_REQUESTS_LIMIT = 150L
         private const val CALL_SESSIONS_LIMIT = 20L
         private const val ICE_CANDIDATES_LIMIT = 50L
+        private const val ACTIVITIES_COLLECTION = "activities"
         private const val ACTIVITY_POSTS_LIMIT = 50L
         private const val ACTIVITY_REACTIONS_LIMIT = 100L
 

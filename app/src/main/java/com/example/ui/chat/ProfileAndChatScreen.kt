@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -38,7 +39,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AddReaction
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Chat
@@ -46,17 +51,24 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.EmojiEmotions
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.HowToReg
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Report
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.WavingHand
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -105,11 +117,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.example.data.matching.MatchRecommender
 import com.example.data.model.ChatMessage
 import com.example.data.model.FriendStatus
+import com.example.data.model.GalleryPhoto
 import com.example.data.model.UserProfile
 import com.example.ui.common.AllEmojisPickerDialog
+import com.example.ui.common.MemberPresenceFormatter
+import com.example.ui.common.MemberPresenceStatusRow
 import com.example.ui.common.SogoEmojiCatalog
+import com.example.ui.profile.ProfilePhotoSourceDialog
+import com.example.ui.profile.rememberProfilePhotoPickerController
 import com.example.ui.theme.AlertRed
 import com.example.ui.theme.BurgundyDark
 import com.example.ui.theme.BurgundyLight
@@ -134,8 +152,16 @@ import java.util.Locale
 fun ProfileAndChatScreen(
     partner: UserProfile,
     viewModel: ChatViewModel,
+    myProfile: UserProfile? = null,
     friendStatus: FriendStatus = FriendStatus.NONE,
+    isFollowing: Boolean = false,
+    isFavorited: Boolean = false,
+    isLiked: Boolean = false,
     onFriendActionClick: () -> Unit = {},
+    onToggleFollow: () -> Unit = {},
+    onToggleFavorite: () -> Unit = {},
+    onToggleLike: () -> Unit = {},
+    onSayHi: () -> Unit = {},
     onStartAudioCall: () -> Unit = {},
     onStartVideoCall: () -> Unit = {},
     onBack: () -> Unit
@@ -145,6 +171,10 @@ fun ProfileAndChatScreen(
 
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
+    val partnerIsOnline = MemberPresenceFormatter.isEffectivelyOnline(partner)
+    val chatPhotoPicker = rememberProfilePhotoPickerController { dataUri ->
+        viewModel.sendImageMessage(dataUri)
+    }
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var showEmojiDrawer by remember { mutableStateOf(false) }
@@ -153,9 +183,20 @@ fun ProfileAndChatScreen(
     var showReportDialog by remember { mutableStateOf(false) }
     var reportReason by remember { mutableStateOf("Inappropriate content") }
     var reportDetails by remember { mutableStateOf("") }
+    var pendingContentReportMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var contentReportReason by remember { mutableStateOf("Harassment or abusive language") }
+    var contentReportDetails by remember { mutableStateOf("") }
 
-    LaunchedEffect(partner.userId) {
-        viewModel.initializeChat(partner)
+    if (chatPhotoPicker.showSourceChooser) {
+        ProfilePhotoSourceDialog(
+            onDismiss = { chatPhotoPicker.dismissChooser() },
+            onChooseGallery = { chatPhotoPicker.launchGalleryPicker() },
+            onTakePhoto = { chatPhotoPicker.launchCameraCapture() }
+        )
+    }
+
+    LaunchedEffect(partner.userId, myProfile?.userId) {
+        viewModel.initializeChat(partner, myProfile)
     }
 
     // Scroll to newest message when messages change
@@ -303,6 +344,200 @@ fun ProfileAndChatScreen(
         )
     }
 
+    // Report Content (Message Moderation) Dialog
+    pendingContentReportMessage?.let { flaggedMessage ->
+        val partnerMessages = remember(uiState.messages, partner.userId) {
+            uiState.messages.filter { it.senderId == partner.userId }.takeLast(5).reversed()
+        }
+        AlertDialog(
+            onDismissRequest = {
+                if (!uiState.isSubmittingContentReport) {
+                    pendingContentReportMessage = null
+                }
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Flag,
+                        contentDescription = null,
+                        tint = GoldAccent,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Report Content for Moderation", color = TextWhite, fontSize = 17.sp)
+                }
+            },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        text = "Flagged message (${flaggedMessage.type}):",
+                        color = GoldLight,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MatteBlackSurfaceVariant,
+                        border = BorderStroke(1.dp, OutlineSubtle),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = flaggedMessage.content.ifBlank { "[${flaggedMessage.type}]" },
+                            color = TextWhite,
+                            fontSize = 12.sp,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+
+                    if (partnerMessages.size > 1) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Switch flagged message:",
+                            color = TextMuted,
+                            fontSize = 11.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            partnerMessages.forEach { candidate ->
+                                val isSelected = candidate.messageId == flaggedMessage.messageId
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isSelected) BurgundyPrimary else MatteBlackSurfaceVariant,
+                                    border = BorderStroke(1.dp, if (isSelected) GoldAccent else OutlineSubtle),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { pendingContentReportMessage = candidate }
+                                ) {
+                                    Text(
+                                        text = candidate.content.take(18).ifBlank { candidate.type },
+                                        color = if (isSelected) GoldLight else TextMuted,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Reason for moderation review:", color = TextMuted, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    listOf(
+                        "Harassment or abusive language",
+                        "Explicit or unwanted sexual content",
+                        "Scam, phishing, or solicitation",
+                        "Hate speech or threats",
+                        "Spam or impersonation"
+                    ).forEach { reasonOption ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { contentReportReason = reasonOption }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (contentReportReason == reasonOption) Icons.Default.Check else Icons.Default.Flag,
+                                contentDescription = null,
+                                tint = if (contentReportReason == reasonOption) GoldAccent else TextDim,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = reasonOption,
+                                color = if (contentReportReason == reasonOption) GoldLight else TextWhite,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = contentReportDetails,
+                        onValueChange = { contentReportDetails = it },
+                        placeholder = { Text("Optional context for moderation team...", color = TextDim, fontSize = 12.sp) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(76.dp)
+                            .testTag("content_report_details_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = TextWhite,
+                            unfocusedTextColor = TextWhite,
+                            focusedBorderColor = GoldAccent,
+                            unfocusedBorderColor = OutlineSubtle
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !uiState.isSubmittingContentReport,
+                    onClick = {
+                        val targetMsg = flaggedMessage
+                        val r = contentReportReason
+                        val d = contentReportDetails
+                        pendingContentReportMessage = null
+                        contentReportDetails = ""
+                        viewModel.reportMessageContent(targetMsg, r, d)
+                    },
+                    modifier = Modifier.testTag("submit_content_report_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = BurgundyPrimary)
+                ) {
+                    Text("Submit Report", color = GoldLight, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !uiState.isSubmittingContentReport,
+                    onClick = { pendingContentReportMessage = null }
+                ) {
+                    Text("Cancel", color = TextMuted)
+                }
+            },
+            containerColor = MatteBlackSurface
+        )
+    }
+
+    if (uiState.contentReportSubmitted) {
+        AlertDialog(
+            onDismissRequest = { viewModel.clearContentReportSubmitted() },
+            title = { Text("Content Flagged for Review", color = GoldLight) },
+            text = {
+                Text(
+                    text = "Thank you for reporting this message. It has been queued in the content_reports collection for review by the moderation team.",
+                    color = TextMuted,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.clearContentReportSubmitted()
+                        showBlockConfirmDialog = true
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AlertRed),
+                    modifier = Modifier.testTag("content_report_block_button")
+                ) {
+                    Text("Block Member", color = TextWhite)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.clearContentReportSubmitted() },
+                    modifier = Modifier.testTag("content_report_done_button")
+                ) {
+                    Text("Done", color = GoldLight)
+                }
+            },
+            containerColor = MatteBlackSurface
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -350,16 +585,14 @@ fun ProfileAndChatScreen(
                                     )
                                 }
                             }
-                            if (partner.isOnline) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .clip(CircleShape)
-                                        .background(OnlineGreen)
-                                        .border(1.dp, MatteBlackSurface, CircleShape)
-                                        .align(Alignment.BottomEnd)
-                                )
-                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(11.dp)
+                                    .clip(CircleShape)
+                                    .background(if (partnerIsOnline) OnlineGreen else TextDim)
+                                    .border(1.5.dp, MatteBlackSurface, CircleShape)
+                                    .align(Alignment.BottomEnd)
+                            )
                         }
 
                         Spacer(modifier = Modifier.width(10.dp))
@@ -367,11 +600,20 @@ fun ProfileAndChatScreen(
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "${partner.displayName}, ${partner.age}",
+                                    text = if (partner.hideAge) partner.displayName else "${partner.displayName}, ${partner.age}",
                                     color = TextWhite,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold
                                 )
+                                if (partner.isVerifiedMember) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Verified,
+                                        contentDescription = "Verified member",
+                                        tint = Color(0xFF38BDF8),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Icon(
                                     imageVector = if (selectedTab == 0) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
@@ -380,10 +622,11 @@ fun ProfileAndChatScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                             }
-                            Text(
-                                text = if (partner.isOnline) "Active Now" else "Last seen recently",
-                                color = if (partner.isOnline) OnlineGreen else TextMuted,
-                                fontSize = 11.sp
+                            MemberPresenceStatusRow(
+                                member = partner,
+                                dotSize = 7.dp,
+                                fontSize = 11.sp,
+                                showOnlineHalo = true
                             )
                         }
                     }
@@ -392,24 +635,26 @@ fun ProfileAndChatScreen(
                     // Free Audio Call button
                     IconButton(
                         onClick = onStartAudioCall,
+                        enabled = !uiState.isBlocked,
                         modifier = Modifier.testTag("audio_call_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Call,
                             contentDescription = "Free Voice Call",
-                            tint = GoldLight
+                            tint = if (uiState.isBlocked) TextDim else GoldLight
                         )
                     }
 
                     // Free Video Call button
                     IconButton(
                         onClick = onStartVideoCall,
+                        enabled = !uiState.isBlocked,
                         modifier = Modifier.testTag("video_call_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Videocam,
                             contentDescription = "Free Video Call",
-                            tint = OnlineGreen
+                            tint = if (uiState.isBlocked) TextDim else OnlineGreen
                         )
                     }
 
@@ -451,13 +696,35 @@ fun ProfileAndChatScreen(
                                 showReportDialog = true
                             }
                         )
-                        DropdownMenuItem(
-                            text = { Text("Block Member", color = AlertRed) },
-                            onClick = {
-                                showOverflowMenu = false
-                                showBlockConfirmDialog = true
-                            }
-                        )
+                        val latestPartnerMsgForMenu = uiState.messages.lastOrNull { it.senderId == partner.userId }
+                        if (latestPartnerMsgForMenu != null) {
+                            DropdownMenuItem(
+                                text = { Text("Report Content", color = AlertRed) },
+                                modifier = Modifier.testTag("menu_report_content"),
+                                onClick = {
+                                    showOverflowMenu = false
+                                    selectedTab = 1
+                                    pendingContentReportMessage = latestPartnerMsgForMenu
+                                }
+                            )
+                        }
+                        if (uiState.isBlockedByMe) {
+                            DropdownMenuItem(
+                                text = { Text("Unblock Member", color = OnlineGreen) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    viewModel.unblockCurrentMember()
+                                }
+                            )
+                        } else if (!uiState.isBlocked) {
+                            DropdownMenuItem(
+                                text = { Text("Block Member", color = AlertRed) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    showBlockConfirmDialog = true
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -516,16 +783,68 @@ fun ProfileAndChatScreen(
             if (selectedTab == 0) {
                 MemberProfileDetailsView(
                     partner = partner,
+                    myProfile = myProfile,
+                    partnerGalleryPhotos = uiState.partnerGalleryPhotos,
                     friendStatus = friendStatus,
+                    isFollowing = isFollowing,
+                    isFavorited = isFavorited,
+                    isLiked = isLiked,
+                    isBlocked = uiState.isBlocked,
+                    isBlockedByMe = uiState.isBlockedByMe,
                     onFriendActionClick = onFriendActionClick,
+                    onToggleFollow = onToggleFollow,
+                    onToggleFavorite = onToggleFavorite,
+                    onToggleLike = onToggleLike,
+                    onSayHi = onSayHi,
                     onStartVideoCall = onStartVideoCall,
                     onStartChat = { selectedTab = 1 },
                     onBlock = { showBlockConfirmDialog = true },
+                    onUnblock = { viewModel.unblockCurrentMember() },
                     onReport = { showReportDialog = true }
                 )
             } else {
 
-            AnimatedVisibility(visible = uiState.errorMessage != null) {
+            AnimatedVisibility(visible = uiState.isBlocked) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .testTag("blocked_chat_banner"),
+                    color = Color(0xFF3A1219),
+                    border = BorderStroke(1.dp, AlertRed.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Block,
+                            contentDescription = "Blocked",
+                            tint = AlertRed,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Incoming messages from ${partner.displayName} are restricted while blocked.",
+                            color = TextWhite,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (uiState.isBlockedByMe) {
+                            TextButton(
+                                onClick = { viewModel.unblockCurrentMember() },
+                                modifier = Modifier.testTag("chat_unblock_button")
+                            ) {
+                                Text("Unblock", color = GoldLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = uiState.errorMessage != null && !uiState.isBlocked) {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -552,6 +871,76 @@ fun ProfileAndChatScreen(
                 }
             }
 
+            val latestPartnerMsg = remember(uiState.messages, partner.userId) {
+                uiState.messages.lastOrNull { it.senderId == partner.userId }
+            }
+            if (!uiState.isBlocked) {
+                Surface(
+                    color = MatteBlackSurfaceVariant.copy(alpha = 0.7f),
+                    border = BorderStroke(1.dp, OutlineSubtle),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = null,
+                                tint = GoldAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Moderation protection active",
+                                color = TextMuted,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                if (latestPartnerMsg != null) {
+                                    pendingContentReportMessage = latestPartnerMsg
+                                } else {
+                                    showReportDialog = true
+                                }
+                            },
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("chat_report_content_button"),
+                            shape = RoundedCornerShape(16.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            border = BorderStroke(1.dp, AlertRed.copy(alpha = 0.7f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Flag,
+                                contentDescription = "Report Content",
+                                tint = AlertRed,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Report Content",
+                                color = GoldLight,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+
             // Real-Time Messages Feed
             LazyColumn(
                 modifier = Modifier
@@ -561,37 +950,38 @@ fun ProfileAndChatScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (uiState.messages.isEmpty()) {
+                if (uiState.isBlocked) {
                     item {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 32.dp),
+                                .padding(vertical = 40.dp)
+                                .testTag("blocked_chat_empty_state"),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Surface(
                                     shape = CircleShape,
-                                    color = MatteBlackSurfaceVariant,
-                                    modifier = Modifier.size(56.dp)
+                                    color = Color(0xFF3A1219),
+                                    modifier = Modifier.size(60.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.Security,
+                                        imageVector = Icons.Default.Block,
                                         contentDescription = null,
-                                        tint = GoldAccent,
-                                        modifier = Modifier.padding(14.dp)
+                                        tint = AlertRed,
+                                        modifier = Modifier.padding(16.dp)
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    text = "Private End-to-End Chat",
+                                    text = "User Blocked",
                                     color = TextWhite,
-                                    fontSize = 15.sp,
+                                    fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "Say kumusta to ${partner.displayName}! Messages are private and securely stored.",
+                                    text = "Incoming chat messages and profile discovery for ${partner.displayName} are blocked in Firestore.",
                                     color = TextMuted,
                                     fontSize = 12.sp,
                                     textAlign = TextAlign.Center
@@ -599,44 +989,154 @@ fun ProfileAndChatScreen(
                             }
                         }
                     }
-                }
-
-                val currentUid = viewModel.getCurrentUserId()
-                items(items = uiState.messages, key = { it.messageId }) { msg ->
-                    ChatMessageBubble(
-                        message = msg,
-                        isFromMe = msg.senderId != partner.userId,
-                        currentUserId = currentUid,
-                        onToggleReaction = { emoji ->
-                            viewModel.toggleMessageReaction(msg.messageId, emoji)
+                } else {
+                    if (uiState.messages.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MatteBlackSurfaceVariant,
+                                        modifier = Modifier.size(56.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Security,
+                                            contentDescription = null,
+                                            tint = GoldAccent,
+                                            modifier = Modifier.padding(14.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "Private End-to-End Chat",
+                                        color = TextWhite,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Say kumusta to ${partner.displayName}! Messages are private and securely stored.",
+                                        color = TextMuted,
+                                        fontSize = 12.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
                         }
-                    )
+                    }
+
+                    val currentUid = viewModel.getCurrentUserId()
+                    items(items = uiState.messages, key = { it.messageId }) { msg ->
+                        ChatMessageBubble(
+                            message = msg,
+                            isFromMe = msg.senderId != partner.userId,
+                            currentUserId = currentUid,
+                            onToggleReaction = { emoji ->
+                                viewModel.toggleMessageReaction(msg.messageId, emoji)
+                            },
+                            onReportContent = { flagged ->
+                                pendingContentReportMessage = flagged
+                            }
+                        )
+                    }
                 }
             }
 
-            // Quick Dating Stickers & Emojis Bar
-            QuickStickersBar(
-                onStickerSelected = { sticker -> viewModel.sendSticker(sticker) }
-            )
-
-            // Chat Input Bar with Emoji Picker Toggle
-            ChatInputBar(
-                inputText = uiState.inputText,
-                isEmojiDrawerOpen = showEmojiDrawer,
-                onToggleEmojiDrawer = { showEmojiDrawer = !showEmojiDrawer },
-                onTextChanged = { viewModel.onInputTextChanged(it) },
-                onSend = {
-                    showEmojiDrawer = false
-                    viewModel.sendTextMessage()
+            if (uiState.isBlocked) {
+                Surface(
+                    color = MatteBlackSurface,
+                    border = BorderStroke(1.dp, OutlineSubtle),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("blocked_chat_footer")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = AlertRed,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Messaging is disabled while this user is blocked.",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
-            )
+            } else {
+                AnimatedVisibility(visible = uiState.isPartnerTyping) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .testTag("chat_typing_indicator"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MatteBlackSurfaceVariant,
+                            border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.45f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(OnlineGreen)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "${partner.displayName} is typing...",
+                                    color = GoldLight,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                }
 
-            AnimatedVisibility(visible = showEmojiDrawer) {
-                ChatEmojiPickerDrawer(
-                    onEmojiSelected = { emoji ->
-                        viewModel.onInputTextChanged(uiState.inputText + emoji)
+                // Quick Dating Stickers & Emojis Bar
+                QuickStickersBar(
+                    onStickerSelected = { sticker -> viewModel.sendSticker(sticker) }
+                )
+
+                // Chat Input Bar with Emoji Picker Toggle & Photo Attachment
+                ChatInputBar(
+                    inputText = uiState.inputText,
+                    isEmojiDrawerOpen = showEmojiDrawer,
+                    isSending = uiState.isSending,
+                    onToggleEmojiDrawer = { showEmojiDrawer = !showEmojiDrawer },
+                    onAttachPhoto = { chatPhotoPicker.openChooser() },
+                    onTextChanged = { viewModel.onInputTextChanged(it) },
+                    onSend = {
+                        showEmojiDrawer = false
+                        viewModel.sendTextMessage()
                     }
                 )
+
+                AnimatedVisibility(visible = showEmojiDrawer) {
+                    ChatEmojiPickerDrawer(
+                        onEmojiSelected = { emoji ->
+                            viewModel.onInputTextChanged(uiState.inputText + emoji)
+                        }
+                    )
+                }
             }
 
             val imeOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -653,13 +1153,33 @@ fun ProfileAndChatScreen(
 @Composable
 fun MemberProfileDetailsView(
     partner: UserProfile,
+    myProfile: UserProfile? = null,
+    partnerGalleryPhotos: List<GalleryPhoto> = emptyList(),
     friendStatus: FriendStatus = FriendStatus.NONE,
+    isFollowing: Boolean = false,
+    isFavorited: Boolean = false,
+    isLiked: Boolean = false,
+    isBlocked: Boolean = false,
+    isBlockedByMe: Boolean = false,
     onFriendActionClick: () -> Unit = {},
+    onToggleFollow: () -> Unit = {},
+    onToggleFavorite: () -> Unit = {},
+    onToggleLike: () -> Unit = {},
+    onSayHi: () -> Unit = {},
     onStartVideoCall: () -> Unit = {},
     onStartChat: () -> Unit,
     onBlock: () -> Unit,
+    onUnblock: () -> Unit = {},
     onReport: () -> Unit
 ) {
+    val partnerIsOnline = MemberPresenceFormatter.isEffectivelyOnline(partner)
+    val mutualInterests = remember(myProfile, partner) {
+        MatchRecommender.computeMutualInterests(myProfile, partner)
+    }
+    val allTags = remember(partner) {
+        (partner.interests + partner.hobbies).map { it.trim() }.filter { it.isNotBlank() }.distinct()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -734,14 +1254,14 @@ fun MemberProfileDetailsView(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Default.CheckCircle,
+                                imageVector = if (partner.isVerifiedMember) Icons.Default.Verified else Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = GoldLight,
+                                tint = if (partner.isVerifiedMember) Color(0xFF38BDF8) else GoldLight,
                                 modifier = Modifier.size(13.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "18+ VERIFIED",
+                                text = if (partner.isVerifiedMember) "VERIFIED PRO" else "18+ VERIFIED",
                                 color = GoldLight,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -750,55 +1270,63 @@ fun MemberProfileDetailsView(
                     }
 
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
                         color = MatteBlackSurface.copy(alpha = 0.9f),
                         border = CardDefaults.outlinedCardBorder().copy(
                             brush = Brush.horizontalGradient(
-                                if (partner.isOnline) listOf(OnlineGreen, Color(0xFF00796B))
+                                if (partnerIsOnline) listOf(OnlineGreen, Color(0xFF00796B))
                                 else listOf(OutlineSubtle, OutlineSubtle)
                             )
                         )
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(if (partner.isOnline) OnlineGreen else TextDim)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (partner.isOnline) "Active Now" else "Offline",
-                                color = if (partner.isOnline) OnlineGreen else TextMuted,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
+                        MemberPresenceStatusRow(
+                            member = partner,
+                            dotSize = 9.dp,
+                            fontSize = 11.sp,
+                            showOnlineHalo = true,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
                     }
                 }
 
-                // Name & Location Banner
+                // Name, Username, Looking For & Location Banner
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(16.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.Bottom) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = partner.displayName,
                             color = TextWhite,
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        if (!partner.hideAge) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "${partner.age}",
+                                color = GoldLight,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (partner.isVerifiedMember) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Icon(
+                                imageVector = Icons.Default.Verified,
+                                contentDescription = "Verified member",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    if (!partner.username.isNullOrBlank()) {
                         Text(
-                            text = "${partner.age}",
-                            color = GoldLight,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.SemiBold
+                            text = "@${partner.username.removePrefix("@")}",
+                            color = GoldAccent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))
@@ -811,7 +1339,7 @@ fun MemberProfileDetailsView(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "${partner.city ?: "Manila"}, ${partner.country}",
+                            text = if (partner.hideLocation) "Location hidden" else "${partner.city ?: "Manila"}, ${partner.country}",
                             color = TextMuted,
                             fontSize = 13.sp
                         )
@@ -820,6 +1348,15 @@ fun MemberProfileDetailsView(
                             text = "• ${partner.gender}",
                             color = TextDim,
                             fontSize = 13.sp
+                        )
+                    }
+                    if (!partner.lookingFor.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Looking for: ${partner.lookingFor}",
+                            color = GoldLight,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
@@ -841,6 +1378,7 @@ fun MemberProfileDetailsView(
             }
             OutlinedButton(
                 onClick = onFriendActionClick,
+                enabled = !isBlocked,
                 modifier = Modifier
                     .weight(1f)
                     .height(50.dp)
@@ -848,20 +1386,27 @@ fun MemberProfileDetailsView(
                 shape = RoundedCornerShape(25.dp),
                 colors = ButtonDefaults.outlinedButtonColors(
                     containerColor = MatteBlackSurface,
-                    contentColor = if (friendStatus == FriendStatus.REQUEST_RECEIVED) OnlineGreen else GoldLight
+                    contentColor = if (friendStatus == FriendStatus.REQUEST_RECEIVED) OnlineGreen else GoldLight,
+                    disabledContainerColor = MatteBlackSurfaceVariant,
+                    disabledContentColor = TextDim
                 ),
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
-                    if (friendStatus == FriendStatus.REQUEST_RECEIVED) OnlineGreen else OutlineGold
+                    when {
+                        isBlocked -> OutlineSubtle
+                        friendStatus == FriendStatus.REQUEST_RECEIVED -> OnlineGreen
+                        else -> OutlineGold
+                    }
                 )
             ) {
                 Icon(imageVector = friendIcon, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(text = friendLabel, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = if (isBlocked) "Blocked" else friendLabel, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
 
             Button(
                 onClick = onStartVideoCall,
+                enabled = !isBlocked,
                 modifier = Modifier
                     .weight(1f)
                     .height(50.dp)
@@ -869,13 +1414,126 @@ fun MemberProfileDetailsView(
                 shape = RoundedCornerShape(25.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = OnlineGreen.copy(alpha = 0.2f),
-                    contentColor = OnlineGreen
+                    contentColor = OnlineGreen,
+                    disabledContainerColor = MatteBlackSurfaceVariant,
+                    disabledContentColor = TextDim
                 ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, OnlineGreen)
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (isBlocked) OutlineSubtle else OnlineGreen
+                )
             ) {
                 Icon(imageVector = Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(text = "Free Video Call", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Social Engagement Row: Like, Follow, Favorite, Say Hi
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onToggleLike,
+                enabled = !isBlocked,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("profile_like_button"),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (isLiked) BurgundyPrimary else MatteBlackSurface,
+                    contentColor = if (isLiked) GoldLight else TextWhite
+                ),
+                border = BorderStroke(1.dp, if (isLiked) GoldAccent else OutlineSubtle)
+            ) {
+                Icon(
+                    imageVector = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    contentDescription = "Like profile",
+                    tint = if (isLiked) Color(0xFFFF4D6D) else GoldAccent,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(if (isLiked) "Liked" else "Like", fontSize = 11.sp, maxLines = 1)
+            }
+
+            OutlinedButton(
+                onClick = onToggleFollow,
+                enabled = !isBlocked,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("profile_follow_button"),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (isFollowing) BurgundyDark else MatteBlackSurface,
+                    contentColor = if (isFollowing) GoldLight else TextWhite
+                ),
+                border = BorderStroke(1.dp, if (isFollowing) GoldAccent else OutlineSubtle)
+            ) {
+                Icon(
+                    imageVector = if (isFollowing) Icons.Default.HowToReg else Icons.Default.PersonOutline,
+                    contentDescription = "Follow member",
+                    tint = GoldAccent,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(if (isFollowing) "Following" else "Follow", fontSize = 11.sp, maxLines = 1)
+            }
+
+            OutlinedButton(
+                onClick = onToggleFavorite,
+                enabled = !isBlocked,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("profile_favorite_button"),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (isFavorited) BurgundyDark else MatteBlackSurface,
+                    contentColor = if (isFavorited) GoldLight else TextWhite
+                ),
+                border = BorderStroke(1.dp, if (isFavorited) GoldAccent else OutlineSubtle)
+            ) {
+                Icon(
+                    imageVector = if (isFavorited) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                    contentDescription = "Favorite member",
+                    tint = GoldLight,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(if (isFavorited) "Saved" else "Fav", fontSize = 11.sp, maxLines = 1)
+            }
+
+            OutlinedButton(
+                onClick = onSayHi,
+                enabled = !isBlocked,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("profile_say_hi_button"),
+                shape = RoundedCornerShape(16.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = MatteBlackSurface,
+                    contentColor = OnlineGreen
+                ),
+                border = BorderStroke(1.dp, if (isBlocked) OutlineSubtle else OnlineGreen.copy(alpha = 0.7f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.WavingHand,
+                    contentDescription = "Say Hi",
+                    tint = if (isBlocked) TextDim else OnlineGreen,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Hi!", fontSize = 11.sp, maxLines = 1, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -889,28 +1547,66 @@ fun MemberProfileDetailsView(
                 .height(52.dp)
                 .testTag("start_private_conversation_button"),
             colors = ButtonDefaults.buttonColors(
-                containerColor = BurgundyPrimary,
+                containerColor = if (isBlocked) Color(0xFF3A1219) else BurgundyPrimary,
                 contentColor = TextWhite
             ),
             shape = RoundedCornerShape(26.dp),
             border = ButtonDefaults.outlinedButtonBorder.copy(
-                brush = Brush.horizontalGradient(listOf(GoldAccent, GoldLight))
+                brush = Brush.horizontalGradient(
+                    if (isBlocked) listOf(AlertRed, AlertRed) else listOf(GoldAccent, GoldLight)
+                )
             )
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = Icons.Default.Chat,
+                    imageVector = if (isBlocked) Icons.Default.Block else Icons.Default.Chat,
                     contentDescription = null,
-                    tint = GoldLight,
+                    tint = if (isBlocked) AlertRed else GoldLight,
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "Chat Now",
+                    text = if (isBlocked) "Chat Restricted (Blocked)" else "Chat Now",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = TextWhite
                 )
+            }
+        }
+
+        if (partnerGalleryPhotos.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MatteBlackSurface),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "PHOTO GALLERY (${partnerGalleryPhotos.size})",
+                        color = GoldAccent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(items = partnerGalleryPhotos, key = { it.photoId.ifBlank { it.id } }) { item ->
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(item.photoUrl)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = item.caption ?: "Member gallery photo",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(92.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .border(1.dp, OutlineGold.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -977,7 +1673,7 @@ fun MemberProfileDetailsView(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Interests Card
+        // Interests, Hobbies & Mutual Matches Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MatteBlackSurface),
@@ -985,30 +1681,43 @@ fun MemberProfileDetailsView(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = "INTERESTS & PASSIONS",
+                    text = "INTERESTS, HOBBIES & PASSIONS",
                     color = GoldAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
+                if (mutualInterests.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "✨ ${mutualInterests.size} Mutual Interest(s): ${mutualInterests.joinToString(", ")}",
+                        color = OnlineGreen,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
-                if (partner.interests.isNotEmpty()) {
+                if (allTags.isNotEmpty()) {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        partner.interests.forEach { tag ->
+                        allTags.forEach { tag ->
+                            val isMutual = mutualInterests.any { it.equals(tag, ignoreCase = true) }
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = MatteBlackSurfaceVariant,
+                                color = if (isMutual) OnlineGreen.copy(alpha = 0.14f) else MatteBlackSurfaceVariant,
                                 border = CardDefaults.outlinedCardBorder().copy(
-                                    brush = Brush.horizontalGradient(listOf(OutlineSubtle, OutlineGold))
+                                    brush = Brush.horizontalGradient(
+                                        if (isMutual) listOf(OnlineGreen, GoldAccent)
+                                        else listOf(OutlineSubtle, OutlineGold)
+                                    )
                                 )
                             ) {
                                 Text(
                                     text = tag,
-                                    color = TextWhite,
+                                    color = if (isMutual) OnlineGreen else TextWhite,
                                     fontSize = 12.sp,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                 )
@@ -1036,8 +1745,22 @@ fun MemberProfileDetailsView(
             TextButton(onClick = onReport) {
                 Text("Report Member", color = GoldAccent, fontSize = 12.sp)
             }
-            TextButton(onClick = onBlock) {
-                Text("Block Member", color = AlertRed, fontSize = 12.sp)
+            if (isBlockedByMe) {
+                TextButton(
+                    onClick = onUnblock,
+                    modifier = Modifier.testTag("profile_unblock_button")
+                ) {
+                    Text("Unblock Member", color = OnlineGreen, fontSize = 12.sp)
+                }
+            } else if (!isBlocked) {
+                TextButton(
+                    onClick = onBlock,
+                    modifier = Modifier.testTag("profile_block_button")
+                ) {
+                    Text("Block Member", color = AlertRed, fontSize = 12.sp)
+                }
+            } else {
+                Text("Blocked", color = AlertRed, fontSize = 12.sp)
             }
         }
 
@@ -1051,7 +1774,8 @@ fun ChatMessageBubble(
     message: ChatMessage,
     isFromMe: Boolean,
     currentUserId: String? = null,
-    onToggleReaction: (String) -> Unit = {}
+    onToggleReaction: (String) -> Unit = {},
+    onReportContent: (ChatMessage) -> Unit = {}
 ) {
     val bubbleColor = if (isFromMe) BurgundyPrimary else MatteBlackCard
     val shape = if (isFromMe) {
@@ -1216,13 +1940,26 @@ fun ChatMessageBubble(
                 IconButton(
                     onClick = { showReactionBar = !showReactionBar },
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(48.dp)
                         .testTag("react_message_button_${message.messageId}")
                 ) {
                     Icon(
                         imageVector = Icons.Default.AddReaction,
                         contentDescription = "React with emoji",
                         tint = if (myReaction != null) GoldAccent else TextDim,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                IconButton(
+                    onClick = { onReportContent(message) },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("report_message_button_${message.messageId}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Flag,
+                        contentDescription = "Report Content",
+                        tint = AlertRed.copy(alpha = 0.85f),
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -1314,6 +2051,40 @@ fun ChatMessageBubble(
                             Text(text = "+ All", color = GoldLight, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
+                    if (!isFromMe) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color(0xFF3A1219),
+                            border = BorderStroke(1.dp, AlertRed.copy(alpha = 0.6f)),
+                            modifier = Modifier
+                                .heightIn(min = 38.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable {
+                                    showReactionBar = false
+                                    onReportContent(message)
+                                }
+                                .testTag("report_content_chip_${message.messageId}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Flag,
+                                    contentDescription = null,
+                                    tint = AlertRed,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Report Content",
+                                    color = TextWhite,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1372,7 +2143,9 @@ fun QuickStickersBar(
 fun ChatInputBar(
     inputText: String,
     isEmojiDrawerOpen: Boolean = false,
+    isSending: Boolean = false,
     onToggleEmojiDrawer: () -> Unit = {},
+    onAttachPhoto: () -> Unit = {},
     onTextChanged: (String) -> Unit,
     onSend: () -> Unit
 ) {
@@ -1383,7 +2156,7 @@ fun ChatInputBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
@@ -1396,6 +2169,20 @@ fun ChatInputBar(
                     imageVector = Icons.Default.EmojiEmotions,
                     contentDescription = if (isEmojiDrawerOpen) "Hide emojis" else "Open emoji picker",
                     tint = if (isEmojiDrawerOpen) GoldLight else GoldAccent
+                )
+            }
+
+            IconButton(
+                onClick = onAttachPhoto,
+                enabled = !isSending,
+                modifier = Modifier
+                    .size(48.dp)
+                    .testTag("chat_attach_photo_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AddPhotoAlternate,
+                    contentDescription = "Send Photo",
+                    tint = if (isSending) TextDim else GoldAccent
                 )
             }
 
@@ -1427,16 +2214,16 @@ fun ChatInputBar(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .clickable(enabled = inputText.isNotBlank(), onClick = onSend)
+                    .clickable(enabled = inputText.isNotBlank() && !isSending, onClick = onSend)
                     .testTag("chat_send_button"),
-                color = if (inputText.isNotBlank()) BurgundyPrimary else Color(0xFF2C2A33),
+                color = if (inputText.isNotBlank() && !isSending) BurgundyPrimary else Color(0xFF2C2A33),
                 shape = CircleShape
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
                         contentDescription = "Send Message",
-                        tint = if (inputText.isNotBlank()) GoldLight else TextDim,
+                        tint = if (inputText.isNotBlank() && !isSending) GoldLight else TextDim,
                         modifier = Modifier.size(18.dp)
                     )
                 }

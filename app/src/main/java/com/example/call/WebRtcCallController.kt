@@ -112,12 +112,40 @@ class CallViewModel(
     @Volatile
     private var activeParticipants: List<String> = emptyList()
 
+    @Volatile
+    private var blockedUserIds: Set<String> = emptySet()
+
     private var previousAudioMode: Int? = null
     private var previousSpeakerState: Boolean? = null
 
     init {
         if (repository.getCurrentUserId() != null) {
+            observeBlockedUsers()
             observeSignalingSessions()
+        }
+    }
+
+    private fun observeBlockedUsers() {
+        viewModelScope.launch {
+            try {
+                repository.observeBlockedUserIds().collect { blocked ->
+                    blockedUserIds = blocked
+                    val currentSession = _uiState.value.callSession
+                    if (currentSession != null) {
+                        val otherUid = if (currentSession.callerId == repository.getCurrentUserId()) {
+                            currentSession.calleeId
+                        } else {
+                            currentSession.callerId
+                        }
+                        if (blocked.contains(otherUid)) {
+                            teardownWebRtcAndReset()
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -171,6 +199,7 @@ class CallViewModel(
                 .filter { session ->
                     session.calleeId == myUid &&
                         session.status == "RINGING" &&
+                        session.callerId !in blockedUserIds &&
                         session.callId !in dismissedCallIds &&
                         session.offerSdp.isNotBlank() &&
                         (session.createdAt == null || (nowMs - session.createdAt.toDate().time) <= MAX_RING_AGE_MS)
@@ -212,6 +241,10 @@ class CallViewModel(
             return
         }
         if (callee.userId == myUid) return
+        if (blockedUserIds.contains(callee.userId)) {
+            _uiState.update { it.copy(errorMessage = "Calls are restricted with a blocked user.") }
+            return
+        }
         if (_uiState.value.phase != CallPhase.IDLE) return
 
         val normalizedType = if (callType == "AUDIO") "AUDIO" else "VIDEO"

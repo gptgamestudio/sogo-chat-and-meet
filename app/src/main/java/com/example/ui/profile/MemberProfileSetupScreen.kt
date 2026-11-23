@@ -1,13 +1,5 @@
 package com.example.ui.profile
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.net.Uri
-import android.util.Base64
-import android.util.Log
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +30,7 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Star
@@ -69,14 +63,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -88,13 +80,9 @@ import com.example.ui.theme.BurgundyDark
 import com.example.ui.theme.MatteBlackCard
 import com.example.ui.theme.MatteBlackSurface
 import com.example.ui.theme.OffWhiteText
+import com.example.ui.theme.OnlineGreen
 import com.example.ui.theme.PhilippineGold
 import com.example.ui.theme.SecondaryMuted
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.util.Calendar
 import java.util.GregorianCalendar
 
@@ -210,6 +198,9 @@ fun MemberProfileSetupScreen(
     defaultDisplayName: String = "",
     defaultPhotoUrl: String? = null,
     isSaving: Boolean = false,
+    isUpdatingPhoto: Boolean = false,
+    photoStatusMessage: String? = null,
+    onInstantPhotoSelected: ((String) -> Unit)? = null,
     externalErrorMessage: String? = null,
     onDismissError: () -> Unit = {},
     onSaveProfile: (
@@ -227,9 +218,6 @@ fun MemberProfileSetupScreen(
     onSignOut: () -> Unit = {},
     onClose: (() -> Unit)? = null
 ) {
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-
     var displayName by remember(initialProfile?.userId, defaultDisplayName) {
         mutableStateOf((initialProfile?.displayName ?: defaultDisplayName).take(50))
     }
@@ -285,100 +273,23 @@ fun MemberProfileSetupScreen(
     }
     val birthdayString = "%04d-%02d-%02d".format(birthYear, birthMonth, birthDay)
 
-    var isProcessingPhoto by remember { mutableStateOf(false) }
     var imageLoadFailed by remember(photoUrl) { mutableStateOf(false) }
 
-    val handlePickedUri: (Uri?) -> Unit = { uri ->
-        if (uri != null) {
-            coroutineScope.launch {
-                isProcessingPhoto = true
-                localErrorMessage = null
-                val compressedDataUrl = withContext(Dispatchers.IO) {
-                    try {
-                        val rawBytes = context.contentResolver.openInputStream(uri)?.use { stream ->
-                            stream.readBytes()
-                        }
-                        if (rawBytes != null && rawBytes.isNotEmpty()) {
-                            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, boundsOpts)
-                            var sampleSize = 1
-                            val maxSide = maxOf(boundsOpts.outWidth, boundsOpts.outHeight)
-                            if (maxSide > 640) {
-                                while ((maxSide / (sampleSize * 2)) >= 320) {
-                                    sampleSize *= 2
-                                }
-                            }
-                            val decodeOpts = BitmapFactory.Options().apply {
-                                inSampleSize = sampleSize
-                                inPreferredConfig = Bitmap.Config.RGB_565
-                            }
-                            val bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, decodeOpts)
-                            if (bitmap != null) {
-                                val maxDimension = 320
-                                val scale = (maxDimension.toFloat() / maxOf(bitmap.width, bitmap.height)).coerceAtMost(1f)
-                                val scaled = Bitmap.createScaledBitmap(
-                                    bitmap,
-                                    (bitmap.width * scale).toInt().coerceAtLeast(1),
-                                    (bitmap.height * scale).toInt().coerceAtLeast(1),
-                                    true
-                                )
-                                if (scaled !== bitmap) {
-                                    bitmap.recycle()
-                                }
-                                val baos = ByteArrayOutputStream()
-                                var quality = 70
-                                var encoded: String
-                                do {
-                                    baos.reset()
-                                    scaled.compress(Bitmap.CompressFormat.JPEG, quality, baos)
-                                    encoded = "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-                                    quality -= 15
-                                } while (encoded.length > 60000 && quality >= 25)
-                                scaled.recycle()
-                                if (encoded.length <= 60000) encoded else null
-                            } else null
-                        } else null
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (t: Throwable) {
-                        Log.w("MemberProfileSetup", "Failed to process picked photo: ${t.message}")
-                        null
-                    }
-                }
-                if (compressedDataUrl != null) {
-                    imageLoadFailed = false
-                    photoUrl = compressedDataUrl
-                } else {
-                    localErrorMessage = "Could not load selected photo. Please try another photo or choose a preset below."
-                }
-                isProcessingPhoto = false
-            }
-        }
-    }
-
-    // Android Photo Picker primary + zero-permission GetContent fallback for OEM ROM compatibility
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-        onResult = handlePickedUri
-    )
-    val fallbackGalleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent(),
-        onResult = handlePickedUri
-    )
-    val launchPhotoPicker: () -> Unit = {
+    val photoPickerController = rememberProfilePhotoPickerController { dataUri ->
         localErrorMessage = null
-        try {
-            photoPickerLauncher.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-            )
-        } catch (t: Throwable) {
-            Log.w("MemberProfileSetup", "PickVisualMedia unavailable, falling back to GetContent: ${t.message}")
-            try {
-                fallbackGalleryLauncher.launch("image/*")
-            } catch (fallbackErr: Throwable) {
-                localErrorMessage = "Unable to open photo gallery on this device. Choose a preset avatar below."
-            }
-        }
+        imageLoadFailed = false
+        photoUrl = dataUri
+        onInstantPhotoSelected?.invoke(dataUri)
+    }
+    val isPhotoBusy = photoPickerController.isProcessing || isUpdatingPhoto
+    val displayedPhotoError = localErrorMessage ?: photoPickerController.errorMessage
+
+    if (photoPickerController.showSourceChooser) {
+        ProfilePhotoSourceDialog(
+            onDismiss = { photoPickerController.dismissChooser() },
+            onChooseGallery = { photoPickerController.launchGalleryPicker() },
+            onTakePhoto = { photoPickerController.launchCameraCapture() }
+        )
     }
 
     Scaffold(
@@ -471,7 +382,7 @@ fun MemberProfileSetupScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Profile Photo Section (both the circle and camera button open Photo Picker)
+            // Profile Photo Section (tap circle/badge for source chooser, or pick Gallery / Take Photo directly)
             Box(
                 contentAlignment = Alignment.BottomEnd,
                 modifier = Modifier.size(126.dp)
@@ -483,10 +394,10 @@ fun MemberProfileSetupScreen(
                         .clip(CircleShape)
                         .border(3.dp, PhilippineGold, CircleShape)
                         .background(MatteBlackCard)
-                        .clickable(enabled = !isProcessingPhoto) { launchPhotoPicker() },
+                        .clickable(enabled = !isPhotoBusy) { photoPickerController.openChooser() },
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isProcessingPhoto) {
+                    if (isPhotoBusy) {
                         CircularProgressIndicator(color = PhilippineGold, modifier = Modifier.size(36.dp))
                     } else if (photoUrl.isBlank() || imageLoadFailed) {
                         Column(
@@ -527,45 +438,88 @@ fun MemberProfileSetupScreen(
                         .clip(CircleShape)
                         .background(PhilippineGold)
                         .border(2.dp, MatteBlackCard, CircleShape)
-                        .clickable(enabled = !isProcessingPhoto) { launchPhotoPicker() }
+                        .clickable(enabled = !isPhotoBusy) { photoPickerController.openChooser() }
                         .testTag("upload_photo_button"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.CameraAlt,
-                        contentDescription = "Upload Photo",
+                        contentDescription = "Upload or Take Photo",
                         tint = Color.Black,
                         modifier = Modifier.size(22.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            OutlinedButton(
-                onClick = { launchPhotoPicker() },
-                enabled = !isProcessingPhoto,
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = PhilippineGold),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.testTag("choose_gallery_photo_button")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.CameraAlt,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
+                OutlinedButton(
+                    onClick = { photoPickerController.launchGalleryPicker() },
+                    enabled = !isPhotoBusy,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PhilippineGold),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("choose_gallery_photo_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PhotoLibrary,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isPhotoBusy) "Processing..." else "Gallery",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = { photoPickerController.launchCameraCapture() },
+                    enabled = !isPhotoBusy,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PhilippineGold),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("take_camera_photo_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CameraAlt,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Take Photo",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            if (photoStatusMessage != null && displayedPhotoError == null) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = if (isProcessingPhoto) "Loading Photo..." else "Choose Photo from Gallery",
+                    text = "✓ $photoStatusMessage",
+                    color = OnlineGreen,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("profile_photo_saved_status")
                 )
             }
 
-            if (localErrorMessage != null) {
+            if (displayedPhotoError != null) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = localErrorMessage ?: "",
+                    text = displayedPhotoError,
                     color = Color(0xFFFF8A80),
                     fontSize = 12.sp,
                     textAlign = TextAlign.Center
@@ -597,7 +551,11 @@ fun MemberProfileSetupScreen(
                                 color = if (isSelected) PhilippineGold else Color.Gray,
                                 shape = CircleShape
                             )
-                            .clickable { photoUrl = presetUrl }
+                            .clickable(enabled = !isPhotoBusy) {
+                                imageLoadFailed = false
+                                photoUrl = presetUrl
+                                onInstantPhotoSelected?.invoke(presetUrl)
+                            }
                     ) {
                         AsyncImage(
                             model = presetUrl,

@@ -58,6 +58,7 @@ import com.example.call.CallViewModel
 import com.example.call.LiveCallOverlay
 import com.example.data.model.FriendStatus
 import com.example.data.model.UserProfile
+import com.example.ui.admin.OwnerAdminScreen
 import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.FirebaseAuthListener
 import com.example.ui.auth.signOut
@@ -333,6 +334,15 @@ fun TwoDestinationNavigator(
         }
     }
 
+    LaunchedEffect(lifecycleOwner, currentUserId) {
+        while (true) {
+            kotlinx.coroutines.delay(90_000L)
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                dashboardViewModel.setPresence(true, force = true)
+            }
+        }
+    }
+
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val adMobManager = remember(context) {
@@ -462,25 +472,39 @@ fun TwoDestinationNavigator(
     // null -> SCREEN 1: Main Dashboard
     // non-null -> SCREEN 2: Personal Profile and Private Chat
     var selectedPartner by remember { mutableStateOf<UserProfile?>(null) }
+    var showOwnerAdminDashboard by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (selectedPartner == null) {
+        if (selectedPartner == null && showOwnerAdminDashboard) {
+            OwnerAdminScreen(
+                onBack = { showOwnerAdminDashboard = false }
+            )
+        } else if (selectedPartner == null) {
             // SCREEN 1 — MAIN DASHBOARD
             MainDashboardScreen(
                 viewModel = dashboardViewModel,
                 onSelectMember = { member ->
+                    showOwnerAdminDashboard = false
                     selectedPartner = member
                 },
                 onVideoCallMember = { member ->
                     launchOutgoingCallWithPermission(member, "VIDEO")
                 },
                 coroutineScope = coroutineScope,
-                onSignOut = onSignOut,
+                onSignOut = {
+                    showOwnerAdminDashboard = false
+                    onSignOut()
+                },
                 adStatusMessage = adStatusMessage,
                 rewardCredits = rewardCredits,
                 onDismissAdStatus = { adMobManager?.clearStatusMessage() },
                 onWatchRewardedAd = {
                     adMobManager?.showRewardedAd(activity)
+                },
+                onOpenOwnerAdmin = {
+                    if (dashboardState.isOwnerCandidate) {
+                        showOwnerAdminDashboard = true
+                    }
                 }
             )
         } else {
@@ -499,7 +523,11 @@ fun TwoDestinationNavigator(
                 ProfileAndChatScreen(
                     partner = partner,
                     viewModel = chatViewModel,
+                    myProfile = dashboardState.currentUserProfile,
                     friendStatus = partnerFriendStatus,
+                    isFollowing = dashboardState.followingIds.contains(partner.userId),
+                    isFavorited = dashboardState.favoriteIds.contains(partner.userId),
+                    isLiked = dashboardState.profileLikesGivenIds.contains(partner.userId),
                     onFriendActionClick = {
                         when (partnerFriendStatus) {
                             FriendStatus.NONE -> dashboardViewModel.sendFriendRequest(partner.userId)
@@ -508,6 +536,10 @@ fun TwoDestinationNavigator(
                             FriendStatus.FRIENDS -> dashboardViewModel.removeFriendOrCancel(partner.userId)
                         }
                     },
+                    onToggleFollow = { dashboardViewModel.toggleFollow(partner.userId) },
+                    onToggleFavorite = { dashboardViewModel.toggleFavorite(partner.userId) },
+                    onToggleLike = { dashboardViewModel.toggleProfileLike(partner) },
+                    onSayHi = { dashboardViewModel.sendSayHi(partner) },
                     onStartAudioCall = { launchOutgoingCallWithPermission(partner, "AUDIO") },
                     onStartVideoCall = { launchOutgoingCallWithPermission(partner, "VIDEO") },
                     onBack = {
@@ -526,7 +558,8 @@ fun TwoDestinationNavigator(
 
         if (adMobManager != null && callUiState.phase == CallPhase.IDLE) {
             MovableBottomAdBanner(
-                bannerUnitId = adMobManager.bannerUnitId
+                bannerUnitId = adMobManager.bannerUnitId,
+                defaultBottomPadding = if (selectedPartner == null && !showOwnerAdminDashboard) 76.dp else 0.dp
             )
         }
 

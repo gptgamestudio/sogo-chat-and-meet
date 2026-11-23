@@ -8,18 +8,19 @@ data class EmojiCategory(
 
 object SogoEmojiCatalog {
     val quickReactionEmojis: List<String> = listOf(
-        "👍", "❤️", "😂", "😍", "🔥", "👏", "😢", "🎉"
+        "👍", "❤️", "😂", "🔥", "😍", "👏", "😢", "🎉"
     )
 
     val activityMoods: List<Pair<String, String>> = listOf(
         "☕" to "Coffee Time",
         "🍽️" to "Food Trip",
-        "💼" to "Work Mode",
-        "🏋️" to "Workout",
-        "🎵" to "Music & Chill",
-        "🚗" to "Road Trip",
-        "🌅" to "Good Vibes",
-        "🌙" to "Night Owls"
+        "💼" to "Work",
+        "✈️" to "Travel",
+        "🏖️" to "Beach",
+        "🎵" to "Music",
+        "🎮" to "Gaming",
+        "❤️" to "Dating",
+        "🌟" to "General Activities"
     )
 
     val categories: List<EmojiCategory> = listOf(
@@ -56,7 +57,7 @@ object SogoEmojiCatalog {
             emojis = listOf(
                 "☕", "🧋", "🍵", "🍲", "🍕", "🍔", "🍰", "🍻",
                 "🍷", "🎵", "🎤", "🎧", "🎬", "🎮", "📸", "🚗",
-                "✈️", "🏖️", "🌅", "🌙", "💼", "🏋️", "🛍️", "🏠"
+                "✈️", "🏖️", "🌅", "🌙", "💼", "🏋️", "🛍️", "🌟"
             )
         )
     )
