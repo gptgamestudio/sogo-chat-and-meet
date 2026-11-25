@@ -88,13 +88,11 @@ service cloud.firestore {
                          'userId', 'username', 'displayName', 'photoUrl', 'coverPhotoUrl', 'birthday',
                          'age', 'gender', 'country', 'city', 'aboutMe', 'personality', 'hobbies',
                          'interests', 'lookingFor', 'preferredGender', 'preferredMinAge',
-                         'preferredMaxAge', 'preferredCountry', 'isOnline', 'isVerifiedMember',
-                         'verificationStatus', 'accountStatus', 'hideFromDiscovery',
+                         'preferredMaxAge', 'preferredCountry', 'isOnline',
+                         'accountStatus', 'hideFromDiscovery',
                          'hideOnlineStatus', 'hideAge', 'hideLocation', 'role', 'lastActive',
                          'createdAt', 'updatedAt'
                        ]) &&
-                       (!('isVerifiedMember' in incoming()) || incoming().isVerifiedMember == false) &&
-                       (!('verificationStatus' in incoming()) || incoming().verificationStatus in ['NONE', 'PENDING']) &&
                        (!('accountStatus' in incoming()) || incoming().accountStatus == 'ACTIVE') &&
                        incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
                        incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
@@ -111,11 +109,10 @@ service cloud.firestore {
                            'username', 'displayName', 'photoUrl', 'coverPhotoUrl', 'birthday',
                            'age', 'gender', 'country', 'city', 'aboutMe', 'personality', 'hobbies',
                            'interests', 'lookingFor', 'preferredGender', 'preferredMinAge',
-                           'preferredMaxAge', 'preferredCountry', 'isOnline', 'verificationStatus',
+                           'preferredMaxAge', 'preferredCountry', 'isOnline',
                            'hideFromDiscovery', 'hideOnlineStatus', 'hideAge', 'hideLocation',
                            'role', 'lastActive', 'updatedAt'
                          ]) &&
-                         (!('verificationStatus' in incoming()) || incoming().verificationStatus in ['NONE', 'PENDING']) &&
                          (!('role' in incoming()) || incoming().role == 'member')
                        ) || (
                          isVerifiedOwner() &&
@@ -125,7 +122,7 @@ service cloud.firestore {
                          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
                          isValidUserProfile(incoming(), userId) &&
                          incoming().diff(existing()).affectedKeys().hasOnly([
-                           'isVerifiedMember', 'verificationStatus', 'accountStatus', 'updatedAt'
+                           'accountStatus', 'updatedAt'
                          ])
                        );
 
@@ -139,16 +136,23 @@ service cloud.firestore {
                data.updatedAt is timestamp && data.updatedAt <= request.time;
       }
 
+      function isExistingNonBlockedActivityPost(postId) {
+        return (exists(/databases/$(database)/documents/activities/$(postId)) &&
+                !isBlockedBetween(request.auth.uid, get(/databases/$(database)/documents/activities/$(postId)).data.userId)) ||
+               (exists(/databases/$(database)/documents/activity_posts/$(postId)) &&
+                !isBlockedBetween(request.auth.uid, get(/databases/$(database)/documents/activity_posts/$(postId)).data.authorId));
+      }
+
       match /activity_reactions/{postId} {
         allow get, list: if isOwner(userId);
 
         allow create, update: if isOwner(userId) &&
                                  isValidId(userId) &&
                                  isValidId(postId) &&
-                                 exists(/databases/$(database)/documents/activity_posts/$(postId)) &&
                                  incoming().keys().hasAll(['userId', 'postId', 'emoji', 'updatedAt']) &&
                                  incoming().keys().hasOnly(['userId', 'postId', 'emoji', 'updatedAt']) &&
-                                 isValidActivityReaction(incoming(), postId);
+                                 isValidActivityReaction(incoming(), postId) &&
+                                 isExistingNonBlockedActivityPost(postId);
 
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(postId);
       }
@@ -654,22 +658,35 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(likeId) && existing().likerId == request.auth.uid;
     }
 
+    function isValidProfileVisit(data, visitId) {
+      return data.visitId is string && data.visitId == visitId &&
+             data.visitorId is string && data.visitorId == request.auth.uid &&
+             isValidId(data.visitedUserId) &&
+             data.visitedUserId != request.auth.uid &&
+             visitId == 'visit_' + request.auth.uid + '_' + data.visitedUserId &&
+             !isBlockedBetween(request.auth.uid, data.visitedUserId) &&
+             data.visitorName is string && data.visitorName.size() >= 1 && data.visitorName.size() <= 60 &&
+             (!('visitorPhotoUrl' in data) || data.visitorPhotoUrl == null || (data.visitorPhotoUrl is string && data.visitorPhotoUrl.size() <= 65000)) &&
+             data.keys().hasAll(['visitId', 'visitorId', 'visitedUserId', 'visitorName', 'visitedAt']) &&
+             data.keys().hasOnly(['visitId', 'visitorId', 'visitedUserId', 'visitorName', 'visitorPhotoUrl', 'visitedAt']) &&
+             data.visitedAt is timestamp && data.visitedAt <= request.time;
+    }
+
     match /profile_visits/{visitId} {
       allow get: if isSignedIn() && isValidId(visitId) &&
                     (resource == null || resource.data.visitorId == request.auth.uid || resource.data.visitedUserId == request.auth.uid);
       allow list: if isSignedIn() && (resource.data.visitorId == request.auth.uid || resource.data.visitedUserId == request.auth.uid);
 
-      allow create, update: if isSignedIn() && isValidId(visitId) &&
-                               incoming().visitId == visitId &&
-                               incoming().visitorId == request.auth.uid &&
-                               isValidId(incoming().visitedUserId) &&
-                               incoming().visitedUserId != request.auth.uid &&
-                               !isBlockedBetween(request.auth.uid, incoming().visitedUserId) &&
-                               incoming().visitorName is string && incoming().visitorName.size() >= 1 && incoming().visitorName.size() <= 60 &&
-                               (!('visitorPhotoUrl' in incoming()) || incoming().visitorPhotoUrl == null || (incoming().visitorPhotoUrl is string && incoming().visitorPhotoUrl.size() <= 65000)) &&
-                               incoming().keys().hasAll(['visitId', 'visitorId', 'visitedUserId', 'visitorName', 'visitedAt']) &&
-                               incoming().keys().hasOnly(['visitId', 'visitorId', 'visitedUserId', 'visitorName', 'visitorPhotoUrl', 'visitedAt']) &&
-                               incoming().visitedAt is timestamp && incoming().visitedAt <= request.time;
+      allow create: if isSignedIn() && isValidId(visitId) &&
+                       isValidProfileVisit(incoming(), visitId);
+
+      allow update: if isSignedIn() && isValidId(visitId) &&
+                       existing().visitorId == request.auth.uid &&
+                       incoming().visitId == existing().visitId &&
+                       incoming().visitorId == existing().visitorId &&
+                       incoming().visitedUserId == existing().visitedUserId &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['visitorName', 'visitorPhotoUrl', 'visitedAt']) &&
+                       isValidProfileVisit(incoming(), visitId);
 
       allow delete: if isSignedIn() && isValidId(visitId) &&
                        (existing().visitorId == request.auth.uid || existing().visitedUserId == request.auth.uid);
@@ -801,37 +818,54 @@ service cloud.firestore {
                        (!('shareCount' in incoming()) || incoming().shareCount == 0) &&
                        incoming().reactionCounts is map && incoming().reactionCounts.size() == 0 &&
                        incoming().keys().hasAll(['postId', 'authorId', 'authorName', 'content', 'moodEmoji', 'activityTag', 'reactionCounts', 'totalReactions', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['postId', 'authorId', 'authorName', 'authorUsername', 'authorPhotoUrl', 'authorCity', 'authorCountry', 'authorVerified', 'content', 'imageUrl', 'moodEmoji', 'activityTag', 'reactionCounts', 'totalReactions', 'commentCount', 'shareCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['postId', 'authorId', 'authorName', 'authorUsername', 'authorPhotoUrl', 'authorCity', 'authorCountry', 'content', 'imageUrl', 'moodEmoji', 'activityTag', 'reactionCounts', 'totalReactions', 'commentCount', 'shareCount', 'createdAt', 'updatedAt']) &&
                        incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
                        incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
                        isValidActivityPost(incoming());
 
-      allow update: if isSignedIn() && isValidId(postId) &&
-                       isValidActivityPost(incoming()) &&
-                       incoming().postId == existing().postId &&
-                       incoming().authorId == existing().authorId &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
-                       (
-                         (existing().authorId == request.auth.uid &&
-                          incoming().reactionCounts == existing().reactionCounts &&
-                          incoming().totalReactions == existing().totalReactions &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['content', 'imageUrl', 'moodEmoji', 'activityTag', 'authorName', 'authorUsername', 'authorPhotoUrl', 'authorCity', 'authorCountry', 'updatedAt'])) ||
-                         (incoming().authorName == existing().authorName &&
-                          incoming().content == existing().content &&
-                          incoming().moodEmoji == existing().moodEmoji &&
-                          incoming().activityTag == existing().activityTag &&
-                          !isBlockedBetween(request.auth.uid, existing().authorId) &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['reactionCounts', 'totalReactions', 'updatedAt'])) ||
-                         (incoming().authorName == existing().authorName &&
-                          incoming().content == existing().content &&
-                          incoming().moodEmoji == existing().moodEmoji &&
-                          incoming().activityTag == existing().activityTag &&
-                          incoming().reactionCounts == existing().reactionCounts &&
-                          incoming().totalReactions == existing().totalReactions &&
-                          !isBlockedBetween(request.auth.uid, existing().authorId) &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['commentCount', 'shareCount', 'updatedAt']))
-                       );
+      function isValidActivityPostUpdateBase(postId) {
+        let next = request.resource.data;
+        let prev = resource.data;
+        return isSignedIn() &&
+               isValidId(postId) &&
+               next.postId == prev.postId &&
+               next.authorId == prev.authorId &&
+               next.createdAt == prev.createdAt &&
+               next.updatedAt is timestamp && next.updatedAt <= request.time &&
+               isValidActivityPost(next);
+      }
+
+      function isAuthorActivityPostUpdate() {
+        let next = request.resource.data;
+        let prev = resource.data;
+        return prev.authorId == request.auth.uid &&
+               next.reactionCounts == prev.reactionCounts &&
+               next.totalReactions == prev.totalReactions &&
+               next.diff(prev).affectedKeys().hasOnly([
+                 'content', 'imageUrl', 'moodEmoji', 'activityTag', 'authorName',
+                 'authorUsername', 'authorPhotoUrl', 'authorCity', 'authorCountry', 'updatedAt'
+               ]);
+      }
+
+      function isMemberActivityPostInteraction() {
+        let next = request.resource.data;
+        let prev = resource.data;
+        let changed = next.diff(prev).affectedKeys();
+        return next.authorName == prev.authorName &&
+               next.content == prev.content &&
+               next.moodEmoji == prev.moodEmoji &&
+               next.activityTag == prev.activityTag &&
+               (
+                 changed.hasOnly(['reactionCounts', 'totalReactions', 'updatedAt']) ||
+                 (next.reactionCounts == prev.reactionCounts &&
+                  next.totalReactions == prev.totalReactions &&
+                  changed.hasOnly(['commentCount', 'shareCount', 'updatedAt']))
+               ) &&
+               !isBlockedBetween(request.auth.uid, prev.authorId);
+      }
+
+      allow update: if isValidActivityPostUpdateBase(postId) &&
+                       (isAuthorActivityPostUpdate() || isMemberActivityPostInteraction());
 
       allow delete: if isSignedIn() && isValidId(postId) &&
                        (existing().authorId == request.auth.uid || isVerifiedOwner());
@@ -918,46 +952,62 @@ service cloud.firestore {
                        (!('shareCount' in incoming()) || incoming().shareCount == 0) &&
                        (!('reactionCounts' in incoming()) || (incoming().reactionCounts is map && incoming().reactionCounts.size() == 0)) &&
                        incoming().keys().hasAll(['postId', 'userId', 'authorId', 'username', 'activityType', 'content', 'likes', 'commentIds', 'timestamp']) &&
-                       incoming().keys().hasOnly(['postId', 'userId', 'authorId', 'username', 'authorName', 'authorUsername', 'authorPhotoUrl', 'authorCity', 'authorCountry', 'authorVerified', 'activityType', 'activityTag', 'moodEmoji', 'content', 'imageUrl', 'likes', 'commentIds', 'reactionCounts', 'totalReactions', 'commentCount', 'shareCount', 'timestamp', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['postId', 'userId', 'authorId', 'username', 'authorName', 'authorUsername', 'authorPhotoUrl', 'authorCity', 'authorCountry', 'activityType', 'activityTag', 'moodEmoji', 'content', 'imageUrl', 'likes', 'commentIds', 'reactionCounts', 'totalReactions', 'commentCount', 'shareCount', 'timestamp', 'createdAt', 'updatedAt']) &&
                        incoming().timestamp is timestamp && incoming().timestamp <= request.time &&
                        (!('createdAt' in incoming()) || (incoming().createdAt is timestamp && incoming().createdAt <= request.time)) &&
                        (!('updatedAt' in incoming()) || (incoming().updatedAt is timestamp && incoming().updatedAt <= request.time)) &&
                        isValidActivityRecord(incoming());
 
-      allow update: if isSignedIn() && isValidId(postId) &&
-                       isValidActivityRecord(incoming()) &&
-                       incoming().postId == existing().postId &&
-                       incoming().userId == existing().userId &&
-                       incoming().authorId == existing().authorId &&
-                       incoming().timestamp == existing().timestamp &&
-                       (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
-                       (!('updatedAt' in incoming()) || (incoming().updatedAt is timestamp && incoming().updatedAt <= request.time)) &&
-                       (
-                         (existing().userId == request.auth.uid &&
-                          incoming().likes == existing().likes &&
-                          incoming().commentIds == existing().commentIds &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['content', 'imageUrl', 'moodEmoji', 'activityType', 'activityTag', 'username', 'authorName', 'authorUsername', 'authorPhotoUrl', 'authorCity', 'authorCountry', 'updatedAt'])) ||
-                         (incoming().username == existing().username &&
-                          incoming().activityType == existing().activityType &&
-                          incoming().content == existing().content &&
-                          incoming().commentIds == existing().commentIds &&
-                          !isBlockedBetween(request.auth.uid, existing().userId) &&
-                          isValidActivityLikesToggle(existing().likes, incoming().likes) &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['likes', 'reactionCounts', 'totalReactions', 'updatedAt'])) ||
-                         (incoming().username == existing().username &&
-                          incoming().activityType == existing().activityType &&
-                          incoming().content == existing().content &&
-                          incoming().likes == existing().likes &&
-                          incoming().commentIds == existing().commentIds &&
-                          !isBlockedBetween(request.auth.uid, existing().userId) &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['reactionCounts', 'totalReactions', 'updatedAt'])) ||
-                         (incoming().username == existing().username &&
-                          incoming().activityType == existing().activityType &&
-                          incoming().content == existing().content &&
-                          incoming().likes == existing().likes &&
-                          !isBlockedBetween(request.auth.uid, existing().userId) &&
-                          incoming().diff(existing()).affectedKeys().hasOnly(['commentIds', 'commentCount', 'shareCount', 'updatedAt']))
-                       );
+      function isValidActivityUpdateBase(postId) {
+        let next = request.resource.data;
+        let prev = resource.data;
+        return isSignedIn() &&
+               isValidId(postId) &&
+               next.postId == prev.postId &&
+               next.userId == prev.userId &&
+               next.authorId == prev.authorId &&
+               next.timestamp == prev.timestamp &&
+               (!('createdAt' in prev) || next.createdAt == prev.createdAt) &&
+               (!('updatedAt' in next) || (next.updatedAt is timestamp && next.updatedAt <= request.time)) &&
+               isValidActivityRecord(next);
+      }
+
+      function isAuthorActivityUpdate() {
+        let next = request.resource.data;
+        let prev = resource.data;
+        return prev.userId == request.auth.uid &&
+               next.likes == prev.likes &&
+               next.commentIds == prev.commentIds &&
+               next.diff(prev).affectedKeys().hasOnly([
+                 'content', 'imageUrl', 'moodEmoji', 'activityType', 'activityTag',
+                 'username', 'authorName', 'authorUsername', 'authorPhotoUrl',
+                 'authorCity', 'authorCountry', 'updatedAt'
+               ]);
+      }
+
+      function isMemberActivityInteraction() {
+        let next = request.resource.data;
+        let prev = resource.data;
+        let changed = next.diff(prev).affectedKeys();
+        return next.username == prev.username &&
+               next.activityType == prev.activityType &&
+               next.content == prev.content &&
+               (
+                 (next.likes != prev.likes &&
+                  next.commentIds == prev.commentIds &&
+                  changed.hasOnly(['likes', 'reactionCounts', 'totalReactions', 'updatedAt']) &&
+                  isValidActivityLikesToggle(prev.likes, next.likes)) ||
+                 (next.likes == prev.likes &&
+                  next.commentIds == prev.commentIds &&
+                  changed.hasOnly(['reactionCounts', 'totalReactions', 'updatedAt'])) ||
+                 (next.likes == prev.likes &&
+                  changed.hasOnly(['commentIds', 'commentCount', 'shareCount', 'updatedAt']))
+               ) &&
+               !isBlockedBetween(request.auth.uid, prev.userId);
+      }
+
+      allow update: if isValidActivityUpdateBase(postId) &&
+                       (isAuthorActivityUpdate() || isMemberActivityInteraction());
 
       allow delete: if isSignedIn() && isValidId(postId) &&
                        (existing().userId == request.auth.uid || existing().authorId == request.auth.uid || isVerifiedOwner());
@@ -987,6 +1037,12 @@ service cloud.firestore {
                           getParentActivity().userId == request.auth.uid ||
                           isVerifiedOwner());
       }
+    }
+
+    // --- Legacy Profile Identity & Selfie Verification Requests (Frozen pending manual admin cleanup) ---
+    match /verification_requests/{requestId} {
+      allow get, list: if isVerifiedOwner();
+      allow create, update, delete: if false;
     }
 
     // --- Owner Admin Analytics & Audit Collections ---

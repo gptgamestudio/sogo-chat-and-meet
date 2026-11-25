@@ -32,9 +32,6 @@ data class UserProfile(
     val preferredCountry: String = "ALL",
     @get:PropertyName("isOnline") @field:PropertyName("isOnline")
     val isOnline: Boolean = false,
-    @get:PropertyName("isVerifiedMember") @field:PropertyName("isVerifiedMember")
-    val isVerifiedMember: Boolean = false,
-    val verificationStatus: String = "NONE", // "NONE", "PENDING", "VERIFIED"
     val accountStatus: String = "ACTIVE", // "ACTIVE", "SUSPENDED"
     val hideFromDiscovery: Boolean = false,
     val hideOnlineStatus: Boolean = false,
@@ -282,7 +279,6 @@ data class ActivityPost(
     val authorPhotoUrl: String? = null,
     val authorCity: String? = null,
     val authorCountry: String? = null,
-    val authorVerified: Boolean = false,
     val activityType: String = "",
     val content: String = "",
     val imageUrl: String? = null,

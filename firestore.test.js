@@ -1075,9 +1075,10 @@ test("Chat Messages: participants can react with emojis without altering other p
   }));
 });
 
-// 10. SOGO PRO Social, Gallery, Verification, Activities Photo/Comments/Reports & Messaging Tests
-test("SOGO PRO: member verification & account status are strictly owner-only; owner preserves display/age fields", async () => {
+// 10. SOGO PRO Social, Gallery, Account Status, Activities Photo/Comments/Reports & Messaging Tests
+test("SOGO PRO: verification fields rejected on client writes, accountStatus owner-only, legacy docs remain updatable", async () => {
   const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
   const ownerDb = testEnv.authenticatedContext("owner_admin_uid", {
     email: "gptgamestudioph@gmail.com",
     email_verified: true,
@@ -1086,7 +1087,7 @@ test("SOGO PRO: member verification & account status are strictly owner-only; ow
   }).firestore();
   const past = new Date(Date.now() - 1000);
 
-  // User cannot self-grant isVerifiedMember=true or set accountStatus=SUSPENDED at create
+  // User cannot write legacy isVerifiedMember or verificationStatus fields or set accountStatus=SUSPENDED at create
   await assertFails(aliceDb.collection("users").doc(ALICE_UID).set({
     userId: ALICE_UID,
     displayName: "Alice",
@@ -1097,8 +1098,18 @@ test("SOGO PRO: member verification & account status are strictly owner-only; ow
     createdAt: past,
     updatedAt: past,
   }));
+  await assertFails(aliceDb.collection("users").doc(ALICE_UID).set({
+    userId: ALICE_UID,
+    displayName: "Alice",
+    age: 25,
+    gender: "Female",
+    country: "Philippines",
+    verificationStatus: "PENDING",
+    createdAt: past,
+    updatedAt: past,
+  }));
 
-  // Valid create with verificationStatus PENDING
+  // Valid create without removed verification fields
   await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).set({
     userId: ALICE_UID,
     username: "AlicePH25",
@@ -1106,27 +1117,29 @@ test("SOGO PRO: member verification & account status are strictly owner-only; ow
     age: 25,
     gender: "Female",
     country: "Philippines",
-    verificationStatus: "PENDING",
     accountStatus: "ACTIVE",
     createdAt: past,
     updatedAt: past,
   }));
 
-  // User cannot update isVerifiedMember or accountStatus
+  // Neither user nor owner can write verification fields; user cannot self-suspend
   await assertFails(aliceDb.collection("users").doc(ALICE_UID).update({
-    isVerifiedMember: true,
+    verificationStatus: "PENDING",
     updatedAt: new Date(Date.now() - 500),
   }));
   await assertFails(aliceDb.collection("users").doc(ALICE_UID).update({
     accountStatus: "SUSPENDED",
     updatedAt: new Date(Date.now() - 500),
   }));
-
-  // Verified Owner can update verification badge & account status
-  await assertSucceeds(ownerDb.collection("users").doc(ALICE_UID).update({
+  await assertFails(ownerDb.collection("users").doc(ALICE_UID).update({
     isVerifiedMember: true,
     verificationStatus: "VERIFIED",
-    accountStatus: "ACTIVE",
+    updatedAt: new Date(Date.now() - 500),
+  }));
+
+  // Verified Owner can update accountStatus (e.g., SUSPENDED -> ACTIVE)
+  await assertSucceeds(ownerDb.collection("users").doc(ALICE_UID).update({
+    accountStatus: "SUSPENDED",
     updatedAt: new Date(Date.now() - 500),
   }));
 
@@ -1134,6 +1147,27 @@ test("SOGO PRO: member verification & account status are strictly owner-only; ow
   await assertFails(ownerDb.collection("users").doc(ALICE_UID).update({
     displayName: "OwnerTampered",
     updatedAt: new Date(Date.now() - 200),
+  }));
+
+  // Existing legacy member document already containing verification fields can still update profile/online state
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("users").doc(BOB_UID).set({
+      userId: BOB_UID,
+      displayName: "Bob Legacy",
+      age: 27,
+      gender: "Male",
+      country: "Philippines",
+      isVerifiedMember: true,
+      verificationStatus: "VERIFIED",
+      accountStatus: "ACTIVE",
+      createdAt: past,
+      updatedAt: past,
+    });
+  });
+  await assertSucceeds(bobDb.collection("users").doc(BOB_UID).update({
+    displayName: "Bob Updated",
+    isOnline: true,
+    updatedAt: new Date(Date.now() - 100),
   }));
 });
 
@@ -1230,7 +1264,6 @@ test("SOGO PRO Activities: photo upload, comments, share counts, and activity_re
     authorName: "Alice",
     authorUsername: "Alice28",
     authorCountry: "Philippines",
-    authorVerified: true,
     content: "Coffee time! ☕",
     imageUrl: "data:image/jpeg;base64,/9j/4AAQ",
     moodEmoji: "☕",
@@ -1397,7 +1430,6 @@ test("SOGO PRO Activities collection (/activities): create, self-only likes togg
     authorId: ALICE_UID,
     username: "AlicePH",
     authorName: "Alice",
-    authorVerified: true,
     activityType: "Coffee Time",
     activityTag: "Coffee Time",
     moodEmoji: "☕",
@@ -1450,12 +1482,228 @@ test("SOGO PRO Activities collection (/activities): create, self-only likes togg
     updatedAt: new Date(Date.now() - 400),
   }));
 
+  // Bob writes his emoji reaction in /users/{bob}/activity_reactions/{actId} and updates reactionCounts on /activities/{actId}
+  await assertSucceeds(bobDb.collection("users").doc(BOB_UID).collection("activity_reactions").doc(actId).set({
+    userId: BOB_UID,
+    postId: actId,
+    emoji: "❤️",
+    updatedAt: new Date(Date.now() - 450),
+  }));
+  await assertSucceeds(bobDb.collection("activities").doc(actId).update({
+    reactionCounts: { "❤️": 1 },
+    totalReactions: 1,
+    updatedAt: new Date(Date.now() - 425),
+  }));
+
+  // Bob cannot react to a nonexistent activity post or tamper with post text/authorVerified while reacting
+  await assertFails(bobDb.collection("users").doc(BOB_UID).collection("activity_reactions").doc("missing_post_999").set({
+    userId: BOB_UID,
+    postId: "missing_post_999",
+    emoji: "👍",
+    updatedAt: new Date(Date.now() - 410),
+  }));
+  await assertFails(bobDb.collection("activities").doc(actId).update({
+    content: "Tampered during reaction",
+    reactionCounts: { "❤️": 2 },
+    totalReactions: 2,
+    updatedAt: new Date(Date.now() - 405),
+  }));
+  await assertFails(bobDb.collection("activities").doc(actId).update({
+    authorVerified: true,
+    reactionCounts: { "❤️": 2 },
+    totalReactions: 2,
+    updatedAt: new Date(Date.now() - 404),
+  }));
+
+  // When Alice blocks Bob, Bob cannot write activity_reactions or update likes/reactions/comments on Alice's /activities post
+  const blockId = `block_${ALICE_UID}_${BOB_UID}`;
+  await assertSucceeds(aliceDb.collection("user_blocks").doc(blockId).set({
+    blockId,
+    blockerId: ALICE_UID,
+    blockedId: BOB_UID,
+    createdAt: past,
+  }));
+  await assertFails(bobDb.collection("users").doc(BOB_UID).collection("activity_reactions").doc(actId).set({
+    userId: BOB_UID,
+    postId: actId,
+    emoji: "👍",
+    updatedAt: new Date(Date.now() - 390),
+  }));
+  await assertFails(bobDb.collection("activities").doc(actId).update({
+    likes: [BOB_UID],
+    updatedAt: new Date(Date.now() - 385),
+  }));
+  await assertFails(bobDb.collection("activities").doc(actId).update({
+    reactionCounts: { "👍": 1 },
+    totalReactions: 1,
+    updatedAt: new Date(Date.now() - 380),
+  }));
+  await assertFails(bobDb.collection("activities").doc(actId).update({
+    commentIds: ["cmt_1", "cmt_blocked"],
+    commentCount: 2,
+    updatedAt: new Date(Date.now() - 375),
+  }));
+
   // Non-author Bob cannot delete Alice's activity post, Alice can
   await assertFails(bobDb.collection("activities").doc(actId).delete());
   await assertSucceeds(aliceDb.collection("activities").doc(actId).delete());
 });
 
+// --- Legacy Profile Identity & Selfie Verification Requests (Frozen pending manual admin cleanup) ---
+test("Verification Requests: frozen for all client creates/updates/deletes; owner-only read for cleanup audit", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const ownerDb = testEnv.authenticatedContext("owner_uid", {
+    email: "gptgamestudioph@gmail.com",
+    email_verified: true,
+    owner: true,
+    admin: true,
+  }).firestore();
 
+  const past = new Date(Date.now() - 1000);
+  const legacyReqId = `ver_selfie_${ALICE_UID}`;
 
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("verification_requests").doc(legacyReqId).set({
+      requestId: legacyReqId,
+      userId: ALICE_UID,
+      memberDisplayName: "Alice Santos",
+      method: "FACE_SELFIE",
+      evidencePhotoUrl: "data:image/jpeg;base64,/9j/4AAQ",
+      status: "PENDING",
+      createdAt: past,
+    });
+  });
 
+  // Unauthenticated and non-owner reads denied
+  await assertFails(unauthDb.collection("verification_requests").doc(legacyReqId).get());
+  await assertFails(aliceDb.collection("verification_requests").doc(legacyReqId).get());
+  await assertFails(bobDb.collection("verification_requests").get());
 
+  // New submissions, updates, and client deletes are completely blocked (even for owner)
+  await assertFails(aliceDb.collection("verification_requests").doc(`ver_new_${ALICE_UID}`).set({
+    requestId: `ver_new_${ALICE_UID}`,
+    userId: ALICE_UID,
+    memberDisplayName: "Alice Santos",
+    method: "FACE_SELFIE",
+    evidencePhotoUrl: "data:image/jpeg;base64,/9j/4AAQ",
+    status: "PENDING",
+    createdAt: past,
+  }));
+  await assertFails(ownerDb.collection("verification_requests").doc(legacyReqId).update({
+    status: "APPROVED",
+    reviewedAt: new Date(Date.now() - 400),
+  }));
+  await assertFails(ownerDb.collection("verification_requests").doc(legacyReqId).delete());
+
+  // Verified owner can read legacy records for manual audit/export before Admin SDK purge
+  await assertSucceeds(ownerDb.collection("verification_requests").doc(legacyReqId).get());
+  await assertSucceeds(ownerDb.collection("verification_requests").get());
+});
+
+test("Profile Visits Security: ownership, deterministic visitId, immutable identity fields, and anti-overwrite protection", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+
+  const past1 = new Date(Date.now() - 2000);
+  const past2 = new Date(Date.now() - 1000);
+  const past3 = new Date(Date.now() - 500);
+  const visitId = `visit_${ALICE_UID}_${BOB_UID}`;
+
+  // 1. Unauthenticated read and write attempts are denied
+  await assertFails(unauthDb.collection("profile_visits").doc(visitId).get());
+  await assertFails(unauthDb.collection("profile_visits").where("visitedUserId", "==", BOB_UID).get());
+  await assertFails(unauthDb.collection("profile_visits").doc(visitId).set({
+    visitId,
+    visitorId: ALICE_UID,
+    visitedUserId: BOB_UID,
+    visitorName: "Unauth",
+    visitedAt: past1,
+  }));
+
+  // 2. User cannot create a visit using a manipulated/non-deterministic document ID or another visitor's ID prefix
+  await assertFails(charlieDb.collection("profile_visits").doc(`visit_${ALICE_UID}_${BOB_UID}`).set({
+    visitId: `visit_${ALICE_UID}_${BOB_UID}`,
+    visitorId: CHARLIE_UID,
+    visitedUserId: BOB_UID,
+    visitorName: "Charlie Spoof",
+    visitedAt: past1,
+  }));
+  await assertFails(charlieDb.collection("profile_visits").doc("visit_arbitrary_123").set({
+    visitId: "visit_arbitrary_123",
+    visitorId: CHARLIE_UID,
+    visitedUserId: BOB_UID,
+    visitorName: "Charlie Arbitrary",
+    visitedAt: past1,
+  }));
+
+  // 3. Valid profile visit creation (matches SogoRepository.recordProfileVisit)
+  await assertSucceeds(aliceDb.collection("profile_visits").doc(visitId).set({
+    visitId,
+    visitorId: ALICE_UID,
+    visitedUserId: BOB_UID,
+    visitorName: "Alice Santos",
+    visitorPhotoUrl: "data:image/jpeg;base64,/9j/4AAQ",
+    visitedAt: past1,
+  }));
+
+  // 4. Existing valid reads preserved (Alice visitor + Bob visitedUser can read & list; Charlie cannot)
+  await assertSucceeds(aliceDb.collection("profile_visits").doc(visitId).get());
+  await assertSucceeds(bobDb.collection("profile_visits").doc(visitId).get());
+  await assertSucceeds(bobDb.collection("profile_visits").where("visitedUserId", "==", BOB_UID).get());
+  await assertFails(charlieDb.collection("profile_visits").doc(visitId).get());
+
+  // 5. Valid authorized updates by original visitor succeed (both SogoRepository .set() refresh and .update())
+  await assertSucceeds(aliceDb.collection("profile_visits").doc(visitId).set({
+    visitId,
+    visitorId: ALICE_UID,
+    visitedUserId: BOB_UID,
+    visitorName: "Alice S.",
+    visitedAt: past2,
+  }));
+  await assertSucceeds(aliceDb.collection("profile_visits").doc(visitId).update({
+    visitorName: "Alice Updated",
+    visitorPhotoUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+    visitedAt: past3,
+  }));
+
+  // 6. Cross-user overwrite attempts on Alice's existing visit are denied (both Charlie and Bob)
+  await assertFails(charlieDb.collection("profile_visits").doc(visitId).set({
+    visitId,
+    visitorId: CHARLIE_UID,
+    visitedUserId: BOB_UID,
+    visitorName: "Charlie Hijack",
+    visitedAt: new Date(Date.now() - 200),
+  }));
+  await assertFails(charlieDb.collection("profile_visits").doc(visitId).update({
+    visitorId: CHARLIE_UID,
+    visitorName: "Charlie Overwrite",
+    visitedAt: new Date(Date.now() - 200),
+  }));
+  await assertFails(bobDb.collection("profile_visits").doc(visitId).update({
+    visitorName: "Tampered By Visited",
+    visitedAt: new Date(Date.now() - 200),
+  }));
+
+  // 7. Visitor cannot mutate immutable identity fields or inject protected/extra fields on update
+  await assertFails(aliceDb.collection("profile_visits").doc(visitId).update({
+    visitorId: CHARLIE_UID,
+    visitedAt: new Date(Date.now() - 200),
+  }));
+  await assertFails(aliceDb.collection("profile_visits").doc(visitId).update({
+    visitedUserId: CHARLIE_UID,
+    visitedAt: new Date(Date.now() - 200),
+  }));
+  await assertFails(aliceDb.collection("profile_visits").doc(visitId).update({
+    isVerifiedMember: true,
+    visitedAt: new Date(Date.now() - 200),
+  }));
+
+  // 8. Unauthenticated and third-party delete denied; visited user and visitor can delete cleanly
+  await assertFails(unauthDb.collection("profile_visits").doc(visitId).delete());
+  await assertFails(charlieDb.collection("profile_visits").doc(visitId).delete());
+  await assertSucceeds(bobDb.collection("profile_visits").doc(visitId).delete());
+});

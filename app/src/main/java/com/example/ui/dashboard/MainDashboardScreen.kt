@@ -97,6 +97,7 @@ import com.example.ui.common.PresenceDot
 import com.example.ui.profile.MemberProfileSetupScreen
 import com.example.ui.profile.ProfilePhotoSourceDialog
 import com.example.ui.profile.rememberProfilePhotoPickerController
+import com.example.ui.safety.CommunitySafetyGuidelinesDialog
 import com.example.ui.theme.AlertRed
 import com.example.ui.theme.BurgundyDark
 import com.example.ui.theme.BurgundyPrimary
@@ -139,6 +140,7 @@ fun MainDashboardScreen(
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showAllMembersDirectory by remember { mutableStateOf(false) }
     var showBlockedUsersDialog by remember { mutableStateOf(false) }
+    var showSafetyGuidelinesDialog by remember { mutableStateOf(false) }
     var showPostCreationSheet by remember { mutableStateOf(false) }
     var showConversationsInbox by remember { mutableStateOf(false) }
     var showNotificationsInbox by remember { mutableStateOf(false) }
@@ -266,6 +268,20 @@ fun MainDashboardScreen(
                 viewModel.unblockUser(userId, displayName)
             },
             onDismiss = { showBlockedUsersDialog = false }
+        )
+    }
+
+    if (showSafetyGuidelinesDialog) {
+        CommunitySafetyGuidelinesDialog(
+            onDismiss = { showSafetyGuidelinesDialog = false },
+            onOpenBlockedUsers = {
+                showSafetyGuidelinesDialog = false
+                showBlockedUsersDialog = true
+            },
+            onOpenPrivacySettings = {
+                showSafetyGuidelinesDialog = false
+                activeBottomTab = SogoBottomTab.PROFILE
+            }
         )
     }
 
@@ -734,6 +750,20 @@ fun MainDashboardScreen(
                         )
                         DropdownMenuItem(
                             text = {
+                                Text(
+                                    text = "Community Safety Guidelines",
+                                    color = GoldLight,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            },
+                            modifier = Modifier.testTag("menu_community_safety"),
+                            onClick = {
+                                showMenu = false
+                                showSafetyGuidelinesDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
                                 val blockedCount = uiState.myBlockedUserIds.size
                                 Text(
                                     text = if (blockedCount > 0) "Blocked Users ($blockedCount)" else "Blocked Users",
@@ -1073,7 +1103,6 @@ fun MainDashboardScreen(
                             onUpdateCoverPhoto = { viewModel.updateCoverPhoto(it) },
                             onAddGalleryPhoto = { viewModel.addGalleryPhoto(it) },
                             onDeleteGalleryPhoto = { viewModel.deleteGalleryPhoto(it) },
-                            onRequestVerification = { viewModel.requestMemberVerification() },
                             onSaveDatingPreferences = { username, hobbies, lookingFor, prefGender, minAge, maxAge, prefCountry, hideDisc, hideOnline, hideAge, hideLoc ->
                                 viewModel.updateDatingPreferencesAndPrivacy(
                                     username = username,
@@ -1091,6 +1120,7 @@ fun MainDashboardScreen(
                             },
                             onSelectMember = onSelectMember,
                             onOpenBlockedUsers = { showBlockedUsersDialog = true },
+                            onOpenSafetyGuidelines = { showSafetyGuidelinesDialog = true },
                             onWatchRewardedAd = onWatchRewardedAd,
                             onOpenOwnerAdmin = onOpenOwnerAdmin,
                             onDeleteAccount = { showDeleteAccountDialog = true },
@@ -1122,7 +1152,8 @@ fun MainDashboardScreen(
                             onDeclineFriendRequest = { viewModel.removeFriendOrCancel(it) },
                             onReactActivity = { postId, emoji ->
                                 viewModel.toggleActivityReaction(postId, emoji)
-                            }
+                            },
+                            onOpenSafetyGuidelines = { showSafetyGuidelinesDialog = true }
                         )
                     }
                 }
@@ -1407,14 +1438,17 @@ fun AllMembersDirectoryDialog(
                                     Spacer(modifier = Modifier.width(10.dp))
 
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "${member.displayName}, ${member.age}",
-                                            color = TextWhite,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = if (member.hideAge) member.displayName else "${member.displayName}, ${member.age}",
+                                                color = TextWhite,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false)
+                                            )
+                                        }
                                         Text(
                                             text = "${member.city ?: "Manila"}, ${member.country}",
                                             color = TextMuted,

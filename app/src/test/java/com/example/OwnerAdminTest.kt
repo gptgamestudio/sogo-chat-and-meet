@@ -74,7 +74,6 @@ class OwnerAdminTest {
     ) : OwnerAdminDataSource {
         val updatedStatuses = mutableListOf<Pair<String, String>>()
         val updatedActivityStatuses = mutableListOf<Pair<String, String>>()
-        val verifiedChanges = mutableListOf<Pair<String, Boolean>>()
         val suspensionChanges = mutableListOf<Pair<String, Boolean>>()
 
         override suspend fun verifyOwnerAccess(forceTokenRefresh: Boolean): OwnerAuthStatus = authStatus
@@ -137,13 +136,6 @@ class OwnerAdminTest {
             updatedActivityStatuses += reportId to newStatus
         }
 
-        override suspend fun setMemberVerification(targetUid: String, verified: Boolean) {
-            if (!authStatus.isAuthorized) {
-                throw SecurityException("Owner access required")
-            }
-            verifiedChanges += targetUid to verified
-        }
-
         override suspend fun setMemberAccountStatus(targetUid: String, suspended: Boolean) {
             if (!authStatus.isAuthorized) {
                 throw SecurityException("Owner access required")
@@ -184,6 +176,15 @@ class OwnerAdminTest {
             claims = mapOf("owner" to true, "admin" to true)
         )
         assertFalse(spoofedEmail.isAuthorized)
+
+        val nonGoogleProvider = OwnerDashboardAggregator.evaluateOwnerClaims(
+            email = "gptgamestudioph@gmail.com",
+            emailVerified = true,
+            claims = mapOf("owner" to true, "admin" to true),
+            isGoogleProvider = false
+        )
+        assertFalse(nonGoogleProvider.isAuthorized)
+        assertTrue(nonGoogleProvider.denialReason!!.contains("Google"))
     }
 
     @Test
@@ -320,7 +321,7 @@ class OwnerAdminTest {
     }
 
     @Test
-    fun ownerAdminViewModel_moderatesActivityReportsAndManagesVerificationAndSuspension() = runTest {
+    fun ownerAdminViewModel_moderatesActivityReportsAndManagesAccountSuspension() = runTest {
         val activityReport = ActivityReportRecord(
             reportId = "act_rep_1",
             reporterId = "uid_alice",
@@ -334,8 +335,6 @@ class OwnerAdminTest {
             userId = "uid_bob",
             displayName = "Bob",
             age = 29,
-            isVerifiedMember = false,
-            verificationStatus = "PENDING",
             accountStatus = "ACTIVE"
         )
         val authorizedSource = FakeOwnerAdminDataSource(
@@ -355,12 +354,6 @@ class OwnerAdminTest {
         assertEquals(listOf("act_rep_1" to "DISMISSED"), authorizedSource.updatedActivityStatuses)
         assertEquals("DISMISSED", vm.uiState.value.snapshot.activityReports.first().status)
 
-        vm.toggleMemberVerification("uid_bob", true)
-        advanceUntilIdle()
-        assertEquals(listOf("uid_bob" to true), authorizedSource.verifiedChanges)
-        assertTrue(vm.uiState.value.snapshot.memberDirectory.first().isVerifiedMember)
-        assertEquals("VERIFIED", vm.uiState.value.snapshot.memberDirectory.first().verificationStatus)
-
         vm.toggleMemberSuspension("uid_bob", true)
         advanceUntilIdle()
         assertEquals(listOf("uid_bob" to true), authorizedSource.suspensionChanges)
@@ -372,9 +365,9 @@ class OwnerAdminTest {
             emailVerified = true,
             claims = emptyMap()
         )
-        vm.toggleMemberVerification("uid_bob", false)
+        vm.toggleMemberSuspension("uid_bob", false)
         advanceUntilIdle()
         assertNotNull(vm.uiState.value.errorMessage)
-        assertTrue(vm.uiState.value.snapshot.memberDirectory.first().isVerifiedMember)
+        assertEquals("SUSPENDED", vm.uiState.value.snapshot.memberDirectory.first().accountStatus)
     }
 }

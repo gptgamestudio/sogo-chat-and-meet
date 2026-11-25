@@ -34,7 +34,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -97,7 +97,6 @@ fun OwnProfileTab(
     onUpdateCoverPhoto: (String) -> Unit,
     onAddGalleryPhoto: (String) -> Unit,
     onDeleteGalleryPhoto: (String) -> Unit,
-    onRequestVerification: () -> Unit,
     onSaveDatingPreferences: (
         username: String?,
         hobbies: List<String>,
@@ -113,6 +112,7 @@ fun OwnProfileTab(
     ) -> Unit,
     onSelectMember: (UserProfile) -> Unit,
     onOpenBlockedUsers: () -> Unit,
+    onOpenSafetyGuidelines: () -> Unit = {},
     onWatchRewardedAd: () -> Unit,
     onOpenOwnerAdmin: () -> Unit,
     onDeleteAccount: () -> Unit,
@@ -247,15 +247,6 @@ fun OwnProfileTab(
                                         fontSize = 18.sp,
                                         fontWeight = FontWeight.ExtraBold
                                     )
-                                    if (profile?.isVerifiedMember == true) {
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Icon(
-                                            imageVector = Icons.Default.Verified,
-                                            contentDescription = "Verified",
-                                            tint = Color(0xFF38BDF8),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
                                 }
                                 Text(
                                     text = "${profile?.age ?: 18} • ${profile?.gender ?: ""} • ${profile?.city ?: ""}, ${profile?.country ?: ""}",
@@ -271,36 +262,6 @@ fun OwnProfileTab(
                                 Icon(imageVector = Icons.Default.Edit, contentDescription = null, tint = GoldLight, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text("Edit", color = GoldLight, fontSize = 11.sp)
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        // Verification Status Card
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val verStatus = when {
-                                profile?.isVerifiedMember == true -> "Verified Member ✓"
-                                profile?.verificationStatus == "PENDING" -> "Verification Pending Review"
-                                else -> "Unverified Member"
-                            }
-                            Text(
-                                text = verStatus,
-                                color = if (profile?.isVerifiedMember == true) OnlineGreen else GoldLight,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            if (profile?.isVerifiedMember != true && profile?.verificationStatus != "PENDING") {
-                                OutlinedButton(
-                                    onClick = onRequestVerification,
-                                    modifier = Modifier.heightIn(min = 40.dp),
-                                    border = BorderStroke(1.dp, OutlineGold)
-                                ) {
-                                    Text("Request Verified Badge", color = GoldLight, fontSize = 11.sp)
-                                }
                             }
                         }
                     }
@@ -542,6 +503,19 @@ fun OwnProfileTab(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Owner Admin Dashboard", color = GoldLight, fontWeight = FontWeight.Bold)
                         }
+                    }
+
+                    OutlinedButton(
+                        onClick = onOpenSafetyGuidelines,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("profile_safety_guidelines_button"),
+                        border = BorderStroke(1.dp, OutlineGold)
+                    ) {
+                        Icon(imageVector = Icons.Default.Security, contentDescription = null, tint = GoldLight)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Community Safety Guidelines", color = GoldLight, fontWeight = FontWeight.SemiBold)
                     }
 
                     OutlinedButton(

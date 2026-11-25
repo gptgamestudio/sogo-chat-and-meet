@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.WavingHand
 import androidx.compose.material3.Button
@@ -402,15 +401,6 @@ private fun ProMemberDiscoveryCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
-                        if (member.isVerifiedMember) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Default.Verified,
-                                contentDescription = "Verified member",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
                     }
                     if (!member.username.isNullOrBlank()) {
                         Text(text = "@${member.username}", color = GoldLight, fontSize = 11.sp)

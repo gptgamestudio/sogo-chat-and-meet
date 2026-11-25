@@ -66,7 +66,6 @@ import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Report
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.WavingHand
 import androidx.compose.material3.AlertDialog
@@ -128,6 +127,7 @@ import com.example.ui.common.MemberPresenceStatusRow
 import com.example.ui.common.SogoEmojiCatalog
 import com.example.ui.profile.ProfilePhotoSourceDialog
 import com.example.ui.profile.rememberProfilePhotoPickerController
+import com.example.ui.safety.CommunitySafetyGuidelinesDialog
 import com.example.ui.theme.AlertRed
 import com.example.ui.theme.BurgundyDark
 import com.example.ui.theme.BurgundyLight
@@ -181,6 +181,7 @@ fun ProfileAndChatScreen(
     var showOverflowMenu by remember { mutableStateOf(false) }
     var showBlockConfirmDialog by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    var showSafetyGuidelinesDialog by remember { mutableStateOf(false) }
     var reportReason by remember { mutableStateOf("Inappropriate content") }
     var reportDetails by remember { mutableStateOf("") }
     var pendingContentReportMessage by remember { mutableStateOf<ChatMessage?>(null) }
@@ -204,6 +205,16 @@ fun ProfileAndChatScreen(
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.size - 1)
         }
+    }
+
+    if (showSafetyGuidelinesDialog) {
+        CommunitySafetyGuidelinesDialog(
+            onDismiss = { showSafetyGuidelinesDialog = false },
+            onReportMemberInChat = {
+                showSafetyGuidelinesDialog = false
+                showReportDialog = true
+            }
+        )
     }
 
     // Block Confirmation Dialog
@@ -605,15 +616,6 @@ fun ProfileAndChatScreen(
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold
                                 )
-                                if (partner.isVerifiedMember) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Icon(
-                                        imageVector = Icons.Default.Verified,
-                                        contentDescription = "Verified member",
-                                        tint = Color(0xFF38BDF8),
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Icon(
                                     imageVector = if (selectedTab == 0) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
@@ -687,6 +689,14 @@ fun ProfileAndChatScreen(
                             onClick = {
                                 showOverflowMenu = false
                                 selectedTab = 1
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Community Safety Guidelines", color = GoldLight) },
+                            modifier = Modifier.testTag("chat_menu_safety_guidelines"),
+                            onClick = {
+                                showOverflowMenu = false
+                                showSafetyGuidelinesDialog = true
                             }
                         )
                         DropdownMenuItem(
@@ -891,22 +901,37 @@ fun ProfileAndChatScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .clickable { showSafetyGuidelinesDialog = true }
+                                .padding(end = 8.dp)
+                                .testTag("chat_safety_tips_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Security,
-                                contentDescription = null,
+                                contentDescription = "View Community Safety Guidelines",
                                 tint = GoldAccent,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Moderation protection active",
-                                color = TextMuted,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Column {
+                                Text(
+                                    text = "Moderation protection active",
+                                    color = TextMuted,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Tap for Safety Guidelines & Tips",
+                                    color = GoldLight,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                         OutlinedButton(
                             onClick = {
@@ -1254,14 +1279,14 @@ fun MemberProfileDetailsView(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = if (partner.isVerifiedMember) Icons.Default.Verified else Icons.Default.CheckCircle,
+                                imageVector = Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = if (partner.isVerifiedMember) Color(0xFF38BDF8) else GoldLight,
+                                tint = GoldLight,
                                 modifier = Modifier.size(13.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (partner.isVerifiedMember) "VERIFIED PRO" else "18+ VERIFIED",
+                                text = "18+ COMMUNITY",
                                 color = GoldLight,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -1309,15 +1334,6 @@ fun MemberProfileDetailsView(
                                 color = GoldLight,
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                        if (partner.isVerifiedMember) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Icon(
-                                imageVector = Icons.Default.Verified,
-                                contentDescription = "Verified member",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }

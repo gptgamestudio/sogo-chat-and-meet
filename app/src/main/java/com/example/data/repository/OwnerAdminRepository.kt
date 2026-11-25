@@ -21,6 +21,7 @@ import com.example.data.model.SanitizedRegistrationEntry
 import com.example.data.model.UserProfile
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -39,7 +40,6 @@ interface OwnerAdminDataSource {
     suspend fun loadOwnerDashboard(): OwnerDashboardSnapshot
     suspend fun updateContentReportStatus(reportId: String, newStatus: String)
     suspend fun updateActivityReportStatus(reportId: String, newStatus: String) {}
-    suspend fun setMemberVerification(targetUid: String, verified: Boolean) {}
     suspend fun setMemberAccountStatus(targetUid: String, suspended: Boolean) {}
 }
 
@@ -53,7 +53,8 @@ object OwnerDashboardAggregator {
     fun evaluateOwnerClaims(
         email: String?,
         emailVerified: Boolean,
-        claims: Map<String, Any?>
+        claims: Map<String, Any?>,
+        isGoogleProvider: Boolean = true
     ): OwnerAuthStatus {
         val normalizedEmail = email?.trim()?.lowercase(Locale.US)
         val hasOwnerClaim = claims["owner"] == true
@@ -63,6 +64,8 @@ object OwnerDashboardAggregator {
         val denialReason = when {
             normalizedEmail.isNullOrBlank() ->
                 "Owner session requires an authenticated Google account."
+            !isGoogleProvider ->
+                "Access denied: Owner authentication requires Google Sign-In."
             !emailMatches ->
                 "Access denied: Signed-in account does not match the registered Owner identity."
             !emailVerified ->
@@ -266,10 +269,14 @@ class FirebaseOwnerAdminRepository(
             user.getIdToken(false).await()
         }
 
+        val hasGoogleProvider = user.providerData.any {
+            it.providerId == GoogleAuthProvider.PROVIDER_ID
+        }
         return OwnerDashboardAggregator.evaluateOwnerClaims(
             email = user.email,
             emailVerified = user.isEmailVerified,
-            claims = tokenResult.claims
+            claims = tokenResult.claims,
+            isGoogleProvider = hasGoogleProvider
         )
     }
 
@@ -541,28 +548,6 @@ class FirebaseOwnerAdminRepository(
             .update("status", normalized)
             .await()
         writeAuditLog("ACTIVITY_REPORT_$normalized", null, "Activity report $reportId marked $normalized")
-    }
-
-    override suspend fun setMemberVerification(targetUid: String, verified: Boolean) {
-        val authStatus = verifyOwnerAccess(forceTokenRefresh = true)
-        if (!authStatus.isAuthorized) {
-            throw SecurityException(authStatus.denialReason ?: "Verified Owner claims required.")
-        }
-        if (targetUid.isBlank()) return
-        val nextStatus = if (verified) "VERIFIED" else "NONE"
-        db.collection("users").document(targetUid)
-            .update(
-                mapOf(
-                    "isVerifiedMember" to verified,
-                    "verificationStatus" to nextStatus,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-        writeAuditLog(
-            action = if (verified) "VERIFY_MEMBER" else "REVOKE_VERIFICATION",
-            targetUid = targetUid,
-            details = "Member verification updated to $nextStatus"
-        )
     }
 
     override suspend fun setMemberAccountStatus(targetUid: String, suspended: Boolean) {

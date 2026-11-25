@@ -24,6 +24,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -68,7 +69,6 @@ interface SogoDataSource {
         hideAge: Boolean,
         hideLocation: Boolean
     ) {}
-    suspend fun requestMemberVerification() {}
     suspend fun updatePresence(isOnline: Boolean, force: Boolean = false)
     fun getConversationIdForUsers(otherUid: String): String
     fun observeConversations(): Flow<List<Conversation>>
@@ -182,7 +182,12 @@ class SogoRepository(
 
     override fun isOwnerCandidateSignedIn(): Boolean {
         val user = auth.currentUser ?: return false
-        return user.email.equals("gptgamestudioph@gmail.com", ignoreCase = true)
+        val hasGoogleProvider = user.providerData.any {
+            it.providerId == GoogleAuthProvider.PROVIDER_ID
+        }
+        return user.isEmailVerified &&
+            hasGoogleProvider &&
+            user.email.equals("gptgamestudioph@gmail.com", ignoreCase = true)
     }
 
     override fun requireUserId(): String {
@@ -300,14 +305,12 @@ class SogoRepository(
             if (!existing.exists()) {
                 val createPayload = HashMap(updatePayload).apply {
                     put("userId", uid)
-                    put("isVerifiedMember", false)
-                    put("verificationStatus", "NONE")
                     put("accountStatus", "ACTIVE")
                     put("createdAt", FieldValue.serverTimestamp())
                 }
                 docRef.set(createPayload).await()
             } else {
-                // Update only allowed mutable keys so owner-granted verificationStatus & accountStatus remain intact
+                // Update only allowed mutable keys so owner-managed accountStatus remains intact
                 docRef.update(updatePayload).await()
             }
             lastCommittedPresenceByUid[uid] = true
@@ -396,24 +399,6 @@ class SogoRepository(
                     "hideOnlineStatus" to hideOnlineStatus,
                     "hideAge" to hideAge,
                     "hideLocation" to hideLocation,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
-            throw e
-        }
-    }
-
-    override suspend fun requestMemberVerification() {
-        val uid = requireUserId()
-        val docRef = db.collection("users").document(uid)
-        try {
-            docRef.update(
-                mapOf(
-                    "verificationStatus" to "PENDING",
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
@@ -1595,7 +1580,6 @@ class SogoRepository(
             "authorId" to uid,
             "username" to cleanUsername,
             "authorName" to cleanAuthorName,
-            "authorVerified" to (authorProfile?.isVerifiedMember ?: false),
             "activityType" to cleanActivityType,
             "activityTag" to cleanActivityType,
             "moodEmoji" to cleanMoodEmoji,

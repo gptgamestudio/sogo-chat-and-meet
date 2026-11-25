@@ -3,10 +3,23 @@ package com.example.ui.auth
 import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+
+/**
+ * Trusted provider/account metadata derived strictly from Firebase Authentication.
+ */
+data class AuthProviderSnapshot(
+    val userId: String? = null,
+    val displayName: String? = null,
+    val photoUrl: String? = null,
+    val email: String? = null,
+    val emailVerified: Boolean = false,
+    val isGoogleSignIn: Boolean = false
+)
 
 /**
  * Immutable snapshot of the active Firebase Authentication session used to drive root navigation
@@ -16,6 +29,9 @@ data class AuthSessionSnapshot(
     val userId: String? = null,
     val displayName: String? = null,
     val photoUrl: String? = null,
+    val email: String? = null,
+    val emailVerified: Boolean = false,
+    val isGoogleSignIn: Boolean = false,
     val sessionNonce: Int = 0,
     val lastTransitionSource: String = "init",
     val updatedAtMs: Long = 0L
@@ -30,6 +46,13 @@ data class AuthSessionSnapshot(
  */
 interface AuthSessionSource {
     fun currentSnapshotData(): Triple<String?, String?, String?>
+    fun currentProviderSnapshot(): AuthProviderSnapshot = currentSnapshotData().let { (uid, name, photo) ->
+        AuthProviderSnapshot(
+            userId = uid,
+            displayName = name,
+            photoUrl = photo
+        )
+    }
     fun registerListeners(onChanged: (source: String) -> Unit): () -> Unit
 }
 
@@ -40,6 +63,21 @@ class FirebaseAuthSessionSource(
     override fun currentSnapshotData(): Triple<String?, String?, String?> {
         val user = auth.currentUser
         return Triple(user?.uid, user?.displayName, user?.photoUrl?.toString())
+    }
+
+    override fun currentProviderSnapshot(): AuthProviderSnapshot {
+        val user = auth.currentUser
+        val hasGoogleProvider = user?.providerData?.any {
+            it.providerId == GoogleAuthProvider.PROVIDER_ID
+        } == true
+        return AuthProviderSnapshot(
+            userId = user?.uid,
+            displayName = user?.displayName,
+            photoUrl = user?.photoUrl?.toString(),
+            email = user?.email,
+            emailVerified = user?.isEmailVerified == true,
+            isGoogleSignIn = hasGoogleProvider
+        )
     }
 
     override fun registerListeners(onChanged: (source: String) -> Unit): () -> Unit {
@@ -80,12 +118,16 @@ class FirebaseAuthListener(
     val state: StateFlow<AuthSessionSnapshot> = _state.asStateFlow()
 
     private fun createInitialSnapshot(): AuthSessionSnapshot {
-        val (uid, displayName, photoUrl) = source.currentSnapshotData()
-        val initialNonce = if (!uid.isNullOrBlank()) 1 else 0
+        val provider = source.currentProviderSnapshot()
+        val uid = provider.userId?.takeIf { it.isNotBlank() }
+        val initialNonce = if (uid != null) 1 else 0
         return AuthSessionSnapshot(
             userId = uid,
-            displayName = displayName,
-            photoUrl = photoUrl,
+            displayName = if (uid != null) provider.displayName else null,
+            photoUrl = if (uid != null) provider.photoUrl else null,
+            email = if (uid != null) provider.email else null,
+            emailVerified = uid != null && provider.emailVerified,
+            isGoogleSignIn = uid != null && provider.isGoogleSignIn,
             sessionNonce = initialNonce,
             lastTransitionSource = "initial_check",
             updatedAtMs = clockMs()
@@ -128,6 +170,9 @@ class FirebaseAuthListener(
                 userId = null,
                 displayName = null,
                 photoUrl = null,
+                email = null,
+                emailVerified = false,
+                isGoogleSignIn = false,
                 sessionNonce = prev.sessionNonce,
                 lastTransitionSource = triggerSource,
                 updatedAtMs = clockMs()
@@ -137,13 +182,21 @@ class FirebaseAuthListener(
     }
 
     private fun syncLocked(triggerSource: String) {
-        val (rawUid, displayName, photoUrl) = source.currentSnapshotData()
-        val nextUid = rawUid?.takeIf { it.isNotBlank() }
+        val provider = source.currentProviderSnapshot()
+        val nextUid = provider.userId?.takeIf { it.isNotBlank() }
         val prev = _state.value
 
         val uidChanged = nextUid != prev.userId
-        val metadataChanged = nextUid != null &&
-            (displayName != prev.displayName || photoUrl != prev.photoUrl)
+        val nextEmailVerified = nextUid != null && provider.emailVerified
+        val nextIsGoogle = nextUid != null && provider.isGoogleSignIn
+        val nextEmail = if (nextUid != null) provider.email else null
+        val metadataChanged = nextUid != null && (
+            provider.displayName != prev.displayName ||
+                provider.photoUrl != prev.photoUrl ||
+                nextEmail != prev.email ||
+                nextEmailVerified != prev.emailVerified ||
+                nextIsGoogle != prev.isGoogleSignIn
+            )
 
         if (!uidChanged && !metadataChanged) {
             return
@@ -157,8 +210,11 @@ class FirebaseAuthListener(
 
         _state.value = AuthSessionSnapshot(
             userId = nextUid,
-            displayName = if (nextUid != null) displayName else null,
-            photoUrl = if (nextUid != null) photoUrl else null,
+            displayName = if (nextUid != null) provider.displayName else null,
+            photoUrl = if (nextUid != null) provider.photoUrl else null,
+            email = nextEmail,
+            emailVerified = nextEmailVerified,
+            isGoogleSignIn = nextIsGoogle,
             sessionNonce = nextNonce,
             lastTransitionSource = triggerSource,
             updatedAtMs = clockMs()
@@ -167,7 +223,7 @@ class FirebaseAuthListener(
         Log.d(
             TAG,
             "Auth transition [$triggerSource]: authenticated=${nextUid != null}, " +
-                "uidChanged=$uidChanged, sessionNonce=$nextNonce, hasDisplayName=${!displayName.isNullOrBlank()}"
+                "uidChanged=$uidChanged, sessionNonce=$nextNonce, google=$nextIsGoogle, emailVerified=$nextEmailVerified"
         )
     }
 

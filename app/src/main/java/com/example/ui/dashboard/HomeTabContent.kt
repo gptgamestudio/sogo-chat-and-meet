@@ -35,7 +35,7 @@ import androidx.compose.material.icons.filled.HowToReg
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.WavingHand
 import androidx.compose.material3.Button
@@ -116,6 +116,7 @@ fun HomeTabContent(
     onAcceptFriendRequest: (String) -> Unit,
     onDeclineFriendRequest: (String) -> Unit,
     onReactActivity: (String, String) -> Unit,
+    onOpenSafetyGuidelines: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -416,6 +417,66 @@ fun HomeTabContent(
                 }
             }
         }
+
+        item(key = "home_community_safety") {
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = MatteBlackCard),
+                border = BorderStroke(1.dp, OutlineGold),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenSafetyGuidelines)
+                    .testTag("home_safety_guidelines_card")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(BurgundyDark),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = "Community Safety Guidelines",
+                            tint = GoldLight,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "COMMUNITY SAFETY GUIDELINES",
+                            color = GoldLight,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.7.sp
+                        )
+                        Text(
+                            text = "Private interaction tips, blocking & reporting tools",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onOpenSafetyGuidelines,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("home_safety_guidelines_button"),
+                        border = BorderStroke(1.dp, OutlineGold),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Read", color = GoldLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -510,15 +571,6 @@ private fun HeroProfileHeaderCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
-                        if (profile?.isVerifiedMember == true) {
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Icon(
-                                imageVector = Icons.Default.Verified,
-                                contentDescription = "Verified member badge",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
                     }
                     if (!username.isNullOrBlank()) {
                         Text(
@@ -773,18 +825,23 @@ private fun OnlineRecommendationCard(
                         Spacer(modifier = Modifier.width(1.dp))
                     }
 
-                    if (recommended.mutualInterests.isNotEmpty()) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = BurgundyPrimary.copy(alpha = 0.92f)
-                        ) {
-                            Text(
-                                text = "${recommended.mutualInterests.size} mutual",
-                                color = GoldLight,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (recommended.mutualInterests.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = BurgundyPrimary.copy(alpha = 0.92f)
+                            ) {
+                                Text(
+                                    text = "${recommended.mutualInterests.size} mutual",
+                                    color = GoldLight,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -804,15 +861,6 @@ private fun OnlineRecommendationCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
-                        if (member.isVerifiedMember) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Default.Verified,
-                                contentDescription = "Verified",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
                     }
                     if (!member.username.isNullOrBlank()) {
                         Text(text = "@${member.username}", color = GoldLight, fontSize = 10.sp)

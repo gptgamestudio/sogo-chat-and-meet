@@ -148,36 +148,6 @@ class OwnerAdminViewModel(
         }
     }
 
-    fun toggleMemberVerification(targetUid: String, verified: Boolean) {
-        if (targetUid.isBlank()) return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isUpdatingModeration = true, errorMessage = null) }
-            try {
-                adminRepository.setMemberVerification(targetUid, verified)
-                val nextStatus = if (verified) "VERIFIED" else "NONE"
-                val updatedMembers = _uiState.value.snapshot.memberDirectory.map { m ->
-                    if (m.userId == targetUid) m.copy(isVerifiedMember = verified, verificationStatus = nextStatus) else m
-                }
-                _uiState.update {
-                    it.copy(
-                        isUpdatingModeration = false,
-                        snapshot = it.snapshot.copy(memberDirectory = updatedMembers),
-                        statusBanner = if (verified) "Verified badge granted." else "Verification badge revoked."
-                    )
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        isUpdatingModeration = false,
-                        errorMessage = e.message ?: "Failed to update member verification."
-                    )
-                }
-            }
-        }
-    }
-
     fun toggleMemberSuspension(targetUid: String, suspended: Boolean) {
         if (targetUid.isBlank()) return
         viewModelScope.launch {

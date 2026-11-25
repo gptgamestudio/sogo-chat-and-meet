@@ -139,9 +139,6 @@ object MatchRecommender {
         if (MemberPresenceFormatter.isEffectivelyOnline(candidate, nowMs)) {
             score += 15
         }
-        if (candidate.isVerifiedMember) {
-            score += 8
-        }
         if (!candidate.photoUrl.isNullOrBlank()) {
             score += 6
         }

@@ -1249,7 +1249,6 @@ class RegressionRepairsTest {
             city = "Manila",
             interests = listOf("Coffee", "Travel"),
             isOnline = true,
-            isVerifiedMember = true,
             lastActive = Timestamp(Date(nowMs - 30_000L))
         )
         val goodMatch = UserProfile(

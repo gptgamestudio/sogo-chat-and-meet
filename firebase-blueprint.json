@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "User profile with personal, dating preferences, verification, and privacy settings",
+      "description": "User profile with personal, dating preferences, and privacy settings",
       "type": "object",
       "properties": {
         "userId": { "type": "string", "description": "Unique auth UID of the user" },
@@ -25,8 +25,6 @@
         "preferredMaxAge": { "type": "integer", "description": "Maximum preferred match age" },
         "preferredCountry": { "type": "string", "description": "Preferred match country or ALL" },
         "isOnline": { "type": "boolean", "description": "Whether user is currently active" },
-        "isVerifiedMember": { "type": "boolean", "description": "Owner-verified member badge status" },
-        "verificationStatus": { "type": "string", "enum": ["NONE", "PENDING", "VERIFIED"], "description": "Member verification review state" },
         "accountStatus": { "type": "string", "enum": ["ACTIVE", "SUSPENDED"], "description": "Owner-managed moderation status" },
         "hideFromDiscovery": { "type": "boolean", "description": "Privacy setting to exclude profile from discovery carousels" },
         "hideOnlineStatus": { "type": "boolean", "description": "Privacy setting to hide online green indicator" },
@@ -283,7 +281,6 @@
         "authorPhotoUrl": { "type": "string" },
         "authorCity": { "type": "string" },
         "authorCountry": { "type": "string" },
-        "authorVerified": { "type": "boolean" },
         "content": { "type": "string" },
         "imageUrl": { "type": "string" },
         "moodEmoji": { "type": "string" },

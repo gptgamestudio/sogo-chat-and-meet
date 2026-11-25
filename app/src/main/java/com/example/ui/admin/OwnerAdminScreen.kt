@@ -56,12 +56,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.data.model.BillingCapabilityStatus
 import com.example.data.model.ContentReportRecord
 import com.example.data.model.FirestoreMonitoringState
@@ -270,7 +274,8 @@ fun OwnerAdminScreen(
 
             OwnerSectionTabRow(
                 selectedSection = uiState.selectedSection,
-                pendingReportsCount = uiState.snapshot.pendingContentReports.count { it.status == "PENDING" },
+                pendingReportsCount = uiState.snapshot.pendingContentReports.count { it.status == "PENDING" } +
+                    uiState.snapshot.activityReports.count { it.status == "PENDING" },
                 onSelectSection = { viewModel.selectSection(it) }
             )
 
@@ -411,7 +416,7 @@ fun OwnerAdminScreen(
 
                         item(key = "member_moderation_header") {
                             Text(
-                                text = "MEMBER VERIFICATION & ACCOUNT CONTROLS (${directoryMembers.size})",
+                                text = "MEMBER ACCOUNT CONTROLS (${directoryMembers.size})",
                                 color = GoldLight,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -424,7 +429,7 @@ fun OwnerAdminScreen(
                             item(key = "empty_member_directory_card") {
                                 EmptyAdminInfoCard(
                                     title = "No Member Profiles Loaded",
-                                    body = "Registered member profiles will appear here for badge verification and suspension management."
+                                    body = "Registered member profiles will appear here for account status and suspension management."
                                 )
                             }
                         } else {
@@ -435,7 +440,6 @@ fun OwnerAdminScreen(
                                 MemberAdminControlCard(
                                     member = member,
                                     isUpdating = uiState.isUpdatingModeration,
-                                    onToggleVerified = { viewModel.toggleMemberVerification(member.userId, !member.isVerifiedMember) },
                                     onToggleSuspended = {
                                         val currentlySuspended = member.accountStatus.equals("SUSPENDED", ignoreCase = true)
                                         viewModel.toggleMemberSuspension(member.userId, !currentlySuspended)
@@ -1222,7 +1226,6 @@ private fun ActivityModerationReportCard(
 private fun MemberAdminControlCard(
     member: com.example.data.model.UserProfile,
     isUpdating: Boolean,
-    onToggleVerified: () -> Unit,
     onToggleSuspended: () -> Unit
 ) {
     val isSuspended = member.accountStatus.equals("SUSPENDED", ignoreCase = true)
@@ -1246,7 +1249,7 @@ private fun MemberAdminControlCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${OwnerDashboardAggregator.maskUserId(member.userId)} • ${member.country} • Verification: ${member.verificationStatus}",
+                        text = "${OwnerDashboardAggregator.maskUserId(member.userId)} • ${member.country}",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
@@ -1265,41 +1268,23 @@ private fun MemberAdminControlCard(
                 }
             }
             Spacer(modifier = Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onToggleVerified,
-                    enabled = !isUpdating,
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 48.dp)
-                        .testTag("admin_verify_member_${member.userId}"),
-                    border = BorderStroke(1.dp, if (member.isVerifiedMember) GoldAccent else OutlineSubtle)
-                ) {
-                    Text(
-                        text = if (member.isVerifiedMember) "Revoke Verified" else "Grant Verified",
-                        color = GoldLight,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                Button(
-                    onClick = onToggleSuspended,
-                    enabled = !isUpdating,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isSuspended) OnlineGreen else AlertRed
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 48.dp)
-                        .testTag("admin_suspend_member_${member.userId}")
-                ) {
-                    Text(
-                        text = if (isSuspended) "Restore" else "Suspend",
-                        color = if (isSuspended) MatteBlackBackground else TextWhite,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+            Button(
+                onClick = onToggleSuspended,
+                enabled = !isUpdating,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSuspended) OnlineGreen else AlertRed
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("admin_suspend_member_${member.userId}")
+            ) {
+                Text(
+                    text = if (isSuspended) "Restore" else "Suspend",
+                    color = if (isSuspended) MatteBlackBackground else TextWhite,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }

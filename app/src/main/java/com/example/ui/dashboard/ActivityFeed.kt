@@ -37,7 +37,6 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -428,15 +427,6 @@ fun ProActivityPostCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
-                        if (post.authorVerified || authorProfile?.isVerifiedMember == true) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Icon(
-                                imageVector = Icons.Default.Verified,
-                                contentDescription = "Verified member",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(

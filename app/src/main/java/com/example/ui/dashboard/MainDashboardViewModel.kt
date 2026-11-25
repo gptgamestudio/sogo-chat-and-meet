@@ -1276,20 +1276,6 @@ class MainDashboardViewModel(
         }
     }
 
-    fun requestMemberVerification() {
-        viewModelScope.launch {
-            try {
-                repository.requestMemberVerification()
-                _currentUserProfile.value = _currentUserProfile.value?.copy(verificationStatus = "PENDING")
-                _actionStatusMessage.value = "Verification request submitted for owner review."
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _errorMessage.value = e.message ?: "Could not submit verification request."
-            }
-        }
-    }
-
     fun sendFriendRequest(targetUid: String) {
         viewModelScope.launch {
             try {

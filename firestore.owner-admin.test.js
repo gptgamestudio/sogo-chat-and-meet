@@ -202,3 +202,79 @@ test("Content Reports: allows reporter to flag chat content, blocks self-report 
   // Report cannot be deleted even by Owner (audit preservation)
   await assertFails(validOwner.collection("content_reports").doc("creport_1").delete());
 });
+
+test("Proposed Rules Parity: /verification_requests owner-only read & frozen writes, plus /activities emoji reaction consistency", async () => {
+  const unauth = testEnv.unauthenticatedContext().firestore();
+  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+  const validOwner = ownerDb();
+  const past = new Date(Date.now() - 1000);
+  const reqId = `ver_legacy_${ALICE_UID}`;
+  const actId = "act_parity_1";
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("verification_requests").doc(reqId).set({
+      requestId: reqId,
+      userId: ALICE_UID,
+      status: "PENDING",
+      createdAt: past,
+    });
+  });
+
+  // Legacy verification_requests: owner-only read, all client writes frozen
+  await assertFails(unauth.collection("verification_requests").doc(reqId).get());
+  await assertFails(alice.collection("verification_requests").doc(reqId).get());
+  await assertFails(alice.collection("verification_requests").doc("ver_new").set({ requestId: "ver_new", userId: ALICE_UID }));
+  await assertFails(validOwner.collection("verification_requests").doc(reqId).update({ status: "APPROVED" }));
+  await assertFails(validOwner.collection("verification_requests").doc(reqId).delete());
+  await assertSucceeds(validOwner.collection("verification_requests").doc(reqId).get());
+  await assertSucceeds(validOwner.collection("verification_requests").get());
+
+  // Activities emoji reactions work cleanly without expression-limit failures
+  await assertSucceeds(alice.collection("activities").doc(actId).set({
+    postId: actId,
+    userId: ALICE_UID,
+    authorId: ALICE_UID,
+    username: "AlicePH",
+    activityType: "Coffee Time",
+    content: "Parity check post",
+    likes: [],
+    commentIds: [],
+    reactionCounts: {},
+    totalReactions: 0,
+    commentCount: 0,
+    shareCount: 0,
+    timestamp: past,
+    createdAt: past,
+    updatedAt: past,
+  }));
+  await assertSucceeds(bob.collection("users").doc(BOB_UID).collection("activity_reactions").doc(actId).set({
+    userId: BOB_UID,
+    postId: actId,
+    emoji: "❤️",
+    updatedAt: new Date(Date.now() - 500),
+  }));
+  await assertSucceeds(bob.collection("activities").doc(actId).update({
+    reactionCounts: { "❤️": 1 },
+    totalReactions: 1,
+    updatedAt: new Date(Date.now() - 400),
+  }));
+
+  // Profile visits: visitor creates & refreshes own visit, third party cannot overwrite
+  const visitId = `visit_${ALICE_UID}_${BOB_UID}`;
+  const charlie = testEnv.authenticatedContext("charlie_789").firestore();
+  await assertSucceeds(alice.collection("profile_visits").doc(visitId).set({
+    visitId,
+    visitorId: ALICE_UID,
+    visitedUserId: BOB_UID,
+    visitorName: "AlicePH",
+    visitedAt: past,
+  }));
+  await assertFails(charlie.collection("profile_visits").doc(visitId).set({
+    visitId,
+    visitorId: "charlie_789",
+    visitedUserId: BOB_UID,
+    visitorName: "CharlieHijack",
+    visitedAt: new Date(Date.now() - 200),
+  }));
+});
