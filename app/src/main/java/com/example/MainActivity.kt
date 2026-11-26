@@ -59,8 +59,12 @@ import com.example.call.LiveCallOverlay
 import com.example.data.model.FriendStatus
 import com.example.data.model.UserProfile
 import com.example.ui.admin.OwnerAdminScreen
+import com.example.ui.auth.AppSessionDestination
 import com.example.ui.auth.AuthScreen
+import com.example.ui.auth.AuthSessionSnapshot
 import com.example.ui.auth.FirebaseAuthListener
+import com.example.ui.auth.UnsupportedSessionRecoveryScreen
+import com.example.ui.auth.resolveAppSessionDestination
 import com.example.ui.auth.signOut
 import com.example.ui.chat.ChatViewModel
 import com.example.ui.chat.ProfileAndChatScreen
@@ -94,6 +98,9 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AppContent() {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val credentialManager = remember { CredentialManager.create(context) }
     val authListener = remember { FirebaseAuthListener(Firebase.auth) }
     val authSession by authListener.state.collectAsState()
 
@@ -104,34 +111,100 @@ fun AppContent() {
         }
     }
 
-    LaunchedEffect(authSession.userId, authSession.sessionNonce, authSession.lastTransitionSource) {
+    LaunchedEffect(
+        authSession.userId,
+        authSession.isGoogleSignIn,
+        authSession.sessionNonce,
+        authSession.lastTransitionSource
+    ) {
         Log.d(
             "MainActivityAuth",
             "Auth session state: authenticated=${authSession.isAuthenticated}, " +
-                "sessionNonce=${authSession.sessionNonce}, source=${authSession.lastTransitionSource}"
+                "google=${authSession.isGoogleSignIn}, sessionNonce=${authSession.sessionNonce}, " +
+                "source=${authSession.lastTransitionSource}"
         )
     }
 
-    val activeUid = authSession.userId
-    if (activeUid == null) {
-        // Render login UI with Google Sign-In button
-        AuthScreen(
-            onAuthSuccess = {
-                authListener.syncNow("google_sign_in_callback")
-            }
-        )
-    } else {
-        // Key by uid + session nonce so signing out or re-signing-in starts fresh observers
-        key(activeUid, authSession.sessionNonce) {
-            PostLoginFlow(
-                currentUserId = activeUid,
-                sessionNonce = authSession.sessionNonce,
-                googleDisplayName = authSession.displayName.orEmpty(),
-                googlePhotoUrl = authSession.photoUrl,
-                onSignOut = {
-                    authListener.markSignedOut("user_sign_out")
+    SessionGateContent(
+        authSession = authSession,
+        onAuthSuccess = {
+            authListener.syncNow("google_sign_in_callback")
+        },
+        onNonGoogleSessionSignOut = { onDone ->
+            signOut(
+                credentialManager = credentialManager,
+                scope = coroutineScope,
+                onSignOutComplete = {
+                    authListener.markSignedOut("unsupported_non_google_sign_out")
+                    onDone()
                 }
             )
+        },
+        onPostLoginSignOut = {
+            authListener.markSignedOut("user_sign_out")
+        }
+    )
+}
+
+@Composable
+fun SessionGateContent(
+    authSession: AuthSessionSnapshot,
+    onAuthSuccess: () -> Unit,
+    onNonGoogleSessionSignOut: (onComplete: () -> Unit) -> Unit,
+    onPostLoginSignOut: () -> Unit,
+    authScreenContent: @Composable (onAuthSuccess: () -> Unit) -> Unit = { successCallback ->
+        AuthScreen(onAuthSuccess = successCallback)
+    },
+    memberFlowContent: @Composable (
+        currentUserId: String,
+        sessionNonce: Int,
+        googleDisplayName: String,
+        googlePhotoUrl: String?,
+        onSignOut: () -> Unit
+    ) -> Unit = { uid, nonce, name, photo, signOutCallback ->
+        PostLoginFlow(
+            currentUserId = uid,
+            sessionNonce = nonce,
+            googleDisplayName = name,
+            googlePhotoUrl = photo,
+            onSignOut = signOutCallback
+        )
+    }
+) {
+    val destination = resolveAppSessionDestination(authSession)
+    var isSigningOutUnsupported by remember(authSession.userId, authSession.sessionNonce) {
+        mutableStateOf(false)
+    }
+
+    when (destination) {
+        AppSessionDestination.AUTH_SIGN_IN -> {
+            authScreenContent(onAuthSuccess)
+        }
+        AppSessionDestination.UNSUPPORTED_NON_GOOGLE_SESSION -> {
+            UnsupportedSessionRecoveryScreen(
+                isSigningOut = isSigningOutUnsupported,
+                onSignOutClick = {
+                    if (!isSigningOutUnsupported) {
+                        isSigningOutUnsupported = true
+                        onNonGoogleSessionSignOut {
+                            isSigningOutUnsupported = false
+                        }
+                    }
+                }
+            )
+        }
+        AppSessionDestination.MEMBER_APP_FLOW -> {
+            val activeUid = authSession.userId ?: return
+            // Key by uid + session nonce so signing out or re-signing-in starts fresh observers
+            key(activeUid, authSession.sessionNonce) {
+                memberFlowContent(
+                    activeUid,
+                    authSession.sessionNonce,
+                    authSession.displayName.orEmpty(),
+                    authSession.photoUrl,
+                    onPostLoginSignOut
+                )
+            }
         }
     }
 }

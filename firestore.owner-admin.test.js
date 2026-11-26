@@ -16,14 +16,25 @@ const BOB_UID = "bob_456";
 const [emulatorHost, emulatorPortStr] = (process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8085").split(":");
 const emulatorPort = parseInt(emulatorPortStr, 10);
 
+const GOOGLE_AUTH_CLAIMS = Object.freeze({
+  firebase: {
+    sign_in_provider: "google.com",
+  },
+});
+
 function ownerDb(overrides = {}) {
+  const { firebase: firebaseOverride, ...rest } = overrides;
   return testEnv
     .authenticatedContext(OWNER_UID, {
       email: OWNER_EMAIL,
       email_verified: true,
       owner: true,
       admin: true,
-      ...overrides,
+      firebase: {
+        sign_in_provider: "google.com",
+        ...(firebaseOverride || {}),
+      },
+      ...rest,
     })
     .firestore();
 }
@@ -81,6 +92,7 @@ test("Owner Admin Security: denies unauthenticated, non-owner, unverified email,
       email_verified: true,
       owner: true,
       admin: true,
+      ...GOOGLE_AUTH_CLAIMS,
     })
     .firestore();
   await assertFails(attackerWithSpoofedClaims.collection("admin_dashboard").doc("summary").get());
@@ -125,7 +137,7 @@ test("Owner Admin Security: prevents client-side writes to admin collections and
   );
 
   // Regular user cannot self-assign role='owner' or role='admin' in users collection
-  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const alice = testEnv.authenticatedContext(ALICE_UID, GOOGLE_AUTH_CLAIMS).firestore();
   const now = new Date();
   await assertFails(
     alice.collection("users").doc(ALICE_UID).set({
@@ -142,8 +154,8 @@ test("Owner Admin Security: prevents client-side writes to admin collections and
 });
 
 test("Content Reports: allows reporter to flag chat content, blocks self-report & status tampering, restricts moderation updates to verified Owner", async () => {
-  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+  const alice = testEnv.authenticatedContext(ALICE_UID, GOOGLE_AUTH_CLAIMS).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID, GOOGLE_AUTH_CLAIMS).firestore();
   const now = new Date();
 
   const validReport = {
@@ -205,8 +217,8 @@ test("Content Reports: allows reporter to flag chat content, blocks self-report 
 
 test("Proposed Rules Parity: /verification_requests owner-only read & frozen writes, plus /activities emoji reaction consistency", async () => {
   const unauth = testEnv.unauthenticatedContext().firestore();
-  const alice = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bob = testEnv.authenticatedContext(BOB_UID).firestore();
+  const alice = testEnv.authenticatedContext(ALICE_UID, GOOGLE_AUTH_CLAIMS).firestore();
+  const bob = testEnv.authenticatedContext(BOB_UID, GOOGLE_AUTH_CLAIMS).firestore();
   const validOwner = ownerDb();
   const past = new Date(Date.now() - 1000);
   const reqId = `ver_legacy_${ALICE_UID}`;
@@ -262,7 +274,7 @@ test("Proposed Rules Parity: /verification_requests owner-only read & frozen wri
 
   // Profile visits: visitor creates & refreshes own visit, third party cannot overwrite
   const visitId = `visit_${ALICE_UID}_${BOB_UID}`;
-  const charlie = testEnv.authenticatedContext("charlie_789").firestore();
+  const charlie = testEnv.authenticatedContext("charlie_789", GOOGLE_AUTH_CLAIMS).firestore();
   await assertSucceeds(alice.collection("profile_visits").doc(visitId).set({
     visitId,
     visitorId: ALICE_UID,
@@ -277,4 +289,61 @@ test("Proposed Rules Parity: /verification_requests owner-only read & frozen wri
     visitorName: "CharlieHijack",
     visitedAt: new Date(Date.now() - 200),
   }));
+});
+
+test("Google Provider Enforcement: rejects Owner with valid claims but non-Google provider and rejects non-Google member tokens", async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("admin_dashboard").doc("summary").set({
+      totalAuthUsers: 42,
+      billingPlan: "SPARK",
+    });
+  });
+
+  // Owner claims paired with non-Google / missing provider claims must fail
+  for (const badProviderClaims of [
+    { firebase: { sign_in_provider: "password" } },
+    { firebase: { sign_in_provider: "anonymous" } },
+    { firebase: { sign_in_provider: "custom" } },
+    { firebase: {} },
+    { firebase: "google.com" },
+  ]) {
+    const nonGoogleOwner = testEnv
+      .authenticatedContext(OWNER_UID, {
+        email: OWNER_EMAIL,
+        email_verified: true,
+        owner: true,
+        admin: true,
+        ...badProviderClaims,
+      })
+      .firestore();
+    await assertFails(nonGoogleOwner.collection("admin_dashboard").doc("summary").get());
+    await assertFails(nonGoogleOwner.collection("verification_requests").get());
+  }
+
+  const missingFirebaseOwner = testEnv
+    .authenticatedContext(OWNER_UID, {
+      email: OWNER_EMAIL,
+      email_verified: true,
+      owner: true,
+      admin: true,
+    })
+    .firestore();
+  await assertFails(missingFirebaseOwner.collection("admin_dashboard").doc("summary").get());
+
+  // Non-Google member tokens cannot write user profiles or access owner collections
+  const passwordMember = testEnv
+    .authenticatedContext(ALICE_UID, { firebase: { sign_in_provider: "password" } })
+    .firestore();
+  await assertFails(passwordMember.collection("users").doc(ALICE_UID).get());
+  await assertFails(
+    passwordMember.collection("users").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      displayName: "Alice",
+      age: 25,
+      gender: "Female",
+      country: "Philippines",
+      createdAt: new Date(Date.now() - 1000),
+      updatedAt: new Date(Date.now() - 1000),
+    })
+  );
 });

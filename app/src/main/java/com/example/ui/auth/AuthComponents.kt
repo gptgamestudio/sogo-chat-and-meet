@@ -11,12 +11,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,6 +50,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -77,6 +82,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Co
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseNetworkException
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
@@ -219,7 +225,7 @@ fun attemptAutoSignIn(
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
-    if (Firebase.auth.currentUser != null) {
+    if (isGoogleAuthenticatedUser(Firebase.auth.currentUser)) {
         onAuthSuccess()
         return
     }
@@ -434,6 +440,7 @@ fun signOut(
     credentialManager: CredentialManager,
     scope: CoroutineScope,
     onSignOutComplete: () -> Unit = {},
+    auth: FirebaseAuth = Firebase.auth
 ) {
     scope.launch {
         withContext(NonCancellable) {
@@ -442,7 +449,7 @@ fun signOut(
             } catch (e: Exception) {
                 Log.w("Auth", "Failed to clear credential state: ${e.message}")
             } finally {
-                Firebase.auth.signOut()
+                auth.signOut()
                 onSignOutComplete()
             }
         }
@@ -746,6 +753,144 @@ fun AuthValidatingCard(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium
             )
+        }
+    }
+}
+
+@Composable
+fun UnsupportedSessionRecoveryScreen(
+    isSigningOut: Boolean = false,
+    onSignOutClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        BurgundyDark,
+                        Color(0xFF22050A),
+                        Color(0xFF0F0E11),
+                        Color(0xFF0F0E11)
+                    )
+                )
+            )
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(horizontal = 28.dp, vertical = 24.dp)
+            .testTag("unsupported_session_recovery_screen"),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("unsupported_session_recovery_card"),
+            colors = CardDefaults.cardColors(containerColor = MatteBlackCard),
+            shape = RoundedCornerShape(20.dp),
+            border = CardDefaults.outlinedCardBorder().copy(
+                brush = Brush.horizontalGradient(listOf(OutlineGold, OutlineSubtle))
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(BurgundyPrimary, BurgundyLight)))
+                        .border(1.5.dp, OutlineGold, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = stringResource(R.string.unsupported_session_title),
+                        tint = GoldLight,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Text(
+                    text = stringResource(R.string.unsupported_session_title),
+                    color = GoldAccent,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = stringResource(R.string.unsupported_session_body),
+                    color = TextWhite,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = stringResource(R.string.unsupported_session_hint),
+                    color = TextMuted,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(22.dp))
+
+                Button(
+                    onClick = onSignOutClick,
+                    enabled = !isSigningOut,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 52.dp)
+                        .testTag("unsupported_session_sign_out_button"),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BurgundyPrimary,
+                        contentColor = TextWhite,
+                        disabledContainerColor = BurgundyDark,
+                        disabledContentColor = TextWhite
+                    ),
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = !isSigningOut).copy(
+                        brush = Brush.horizontalGradient(listOf(GoldAccent, GoldLight))
+                    )
+                ) {
+                    if (isSigningOut) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = GoldLight,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = stringResource(R.string.unsupported_session_signing_out),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = GoldLight
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = GoldLight,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.unsupported_session_sign_out_cta),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ package com.example.ui.auth
 import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,38 @@ data class AuthSessionSnapshot(
     val updatedAtMs: Long = 0L
 ) {
     val isAuthenticated: Boolean get() = !userId.isNullOrBlank()
+    val isGoogleAuthenticated: Boolean get() = isAuthenticated && isGoogleSignIn
+    val isUnsupportedNonGoogleSession: Boolean get() = isAuthenticated && !isGoogleSignIn
+}
+
+enum class AppSessionDestination {
+    AUTH_SIGN_IN,
+    UNSUPPORTED_NON_GOOGLE_SESSION,
+    MEMBER_APP_FLOW
+}
+
+fun hasGoogleAuthProvider(providerIds: Iterable<String?>?): Boolean {
+    return providerIds?.any { providerId ->
+        providerId == GoogleAuthProvider.PROVIDER_ID
+    } == true
+}
+
+fun isGoogleAuthenticatedUser(user: FirebaseUser?): Boolean {
+    if (user == null || user.uid.isBlank()) return false
+    val providerIds = try {
+        user.providerData.map { info -> info?.providerId }
+    } catch (_: Throwable) {
+        return false
+    }
+    return hasGoogleAuthProvider(providerIds)
+}
+
+fun resolveAppSessionDestination(session: AuthSessionSnapshot): AppSessionDestination {
+    return when {
+        session.userId.isNullOrBlank() -> AppSessionDestination.AUTH_SIGN_IN
+        !session.isGoogleSignIn -> AppSessionDestination.UNSUPPORTED_NON_GOOGLE_SESSION
+        else -> AppSessionDestination.MEMBER_APP_FLOW
+    }
 }
 
 /**
@@ -67,15 +100,14 @@ class FirebaseAuthSessionSource(
 
     override fun currentProviderSnapshot(): AuthProviderSnapshot {
         val user = auth.currentUser
-        val hasGoogleProvider = user?.providerData?.any {
-            it.providerId == GoogleAuthProvider.PROVIDER_ID
-        } == true
+        val uid = user?.uid?.takeIf { it.isNotBlank() }
+        val hasGoogleProvider = uid != null && isGoogleAuthenticatedUser(user)
         return AuthProviderSnapshot(
-            userId = user?.uid,
-            displayName = user?.displayName,
-            photoUrl = user?.photoUrl?.toString(),
-            email = user?.email,
-            emailVerified = user?.isEmailVerified == true,
+            userId = uid,
+            displayName = if (uid != null) user?.displayName else null,
+            photoUrl = if (uid != null) user?.photoUrl?.toString() else null,
+            email = if (uid != null) user?.email else null,
+            emailVerified = uid != null && user?.isEmailVerified == true,
             isGoogleSignIn = hasGoogleProvider
         )
     }

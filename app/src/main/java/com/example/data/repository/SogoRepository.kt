@@ -19,6 +19,7 @@ import com.example.data.model.ProfileVisitorRecord
 import com.example.data.model.UserProfile
 import com.example.data.util.OperationType
 import com.example.data.util.handleFirestoreError
+import com.example.ui.auth.isGoogleAuthenticatedUser
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
@@ -191,8 +192,12 @@ class SogoRepository(
     }
 
     override fun requireUserId(): String {
-        return auth.currentUser?.uid
+        val user = auth.currentUser
             ?: throw IllegalStateException("User must be signed in with Google before accessing SOGO CHAT AND MEET.")
+        if (!isGoogleAuthenticatedUser(user)) {
+            throw IllegalStateException("Unsupported non-Google session. Please sign out and sign in with Google.")
+        }
+        return user.uid
     }
 
     // --- User Profile Operations ---
@@ -200,6 +205,11 @@ class SogoRepository(
     override fun observeCurrentUserProfile(userId: String): Flow<UserProfile?> = callbackFlow {
         if (userId.isBlank()) {
             close(IllegalArgumentException("User ID cannot be blank."))
+            return@callbackFlow
+        }
+        val currentUser = auth.currentUser
+        if (currentUser != null && !isGoogleAuthenticatedUser(currentUser)) {
+            close(IllegalStateException("Unsupported non-Google session. Please sign out and sign in with Google."))
             return@callbackFlow
         }
         val path = "users/$userId"
@@ -1217,7 +1227,7 @@ class SogoRepository(
     }
 
     override suspend fun recordProfileVisit(targetUid: String, myProfile: UserProfile?) {
-        val uid = auth.currentUser?.uid ?: return
+        val uid = auth.currentUser?.takeIf { isGoogleAuthenticatedUser(it) }?.uid ?: return
         if (targetUid.isBlank() || targetUid == uid) return
         val visitId = "visit_${uid}_${targetUid}"
         val docRef = db.collection("profile_visits").document(visitId)

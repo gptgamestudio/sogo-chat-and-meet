@@ -9,7 +9,11 @@ service cloud.firestore {
 
     // Helper functions
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null &&
+             'firebase' in request.auth.token &&
+             request.auth.token.firebase is map &&
+             'sign_in_provider' in request.auth.token.firebase &&
+             request.auth.token.firebase.sign_in_provider == 'google.com';
     }
 
     function isOwner(userId) {

@@ -1,12 +1,12 @@
 package com.example.base
 
 import android.content.Context
+import android.util.Base64
 import androidx.test.core.app.ApplicationProvider
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
-import com.google.firebase.auth.FirebaseAuthInvalidUserException
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.FirebaseFirestoreSettings
@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Before
 import org.junit.runner.RunWith
@@ -85,15 +86,41 @@ abstract class FirestoreEmulatorTestBase {
 
   protected suspend fun signInTestUser(email: String): String = withContext(Dispatchers.IO) {
     withTimeout(AUTH_TIMEOUT_MS) {
-      val result = try {
-        auth.signInWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
-      } catch (_: FirebaseAuthInvalidUserException) {
-        auth.createUserWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
-      } catch (_: FirebaseAuthInvalidCredentialsException) {
-        auth.createUserWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
+      val unsignedGoogleJwt = buildEmulatorGoogleIdToken(email)
+      val credential = GoogleAuthProvider.getCredential(unsignedGoogleJwt, null)
+      val result = auth.signInWithCredential(credential).await()
+      val user = checkNotNull(result.user) { "Google IdP emulator user auth failed" }
+      val tokenResult = user.getIdToken(false).await()
+      val firebaseClaim = tokenResult.claims["firebase"] as? Map<*, *>
+      val signInProvider = firebaseClaim?.get("sign_in_provider") as? String ?: tokenResult.signInProvider
+      check(signInProvider == GoogleAuthProvider.PROVIDER_ID) {
+        "Expected Auth Emulator token sign_in_provider='google.com', got '$signInProvider'"
       }
-      checkNotNull(result.user?.uid) { "User auth failed" }
+      check(user.providerData.any { it.providerId == GoogleAuthProvider.PROVIDER_ID }) {
+        "Expected google.com in FirebaseUser.providerData"
+      }
+      user.uid
     }
+  }
+
+  private fun buildEmulatorGoogleIdToken(email: String): String {
+    val normalized = email.trim().lowercase()
+    val sub = "google_" + normalized.replace(Regex("[^a-z0-9]"), "_")
+    val header = JSONObject(mapOf("alg" to "none", "typ" to "JWT")).toString()
+    val payload = JSONObject(
+      mapOf(
+        "sub" to sub,
+        "email" to normalized,
+        "email_verified" to true,
+        "name" to normalized.substringBefore("@"),
+        "iss" to "https://accounts.google.com",
+        "aud" to PROJECT_ID
+      )
+    ).toString()
+    val flags = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+    val encodedHeader = Base64.encodeToString(header.toByteArray(Charsets.UTF_8), flags)
+    val encodedPayload = Base64.encodeToString(payload.toByteArray(Charsets.UTF_8), flags)
+    return "$encodedHeader.$encodedPayload."
   }
 
   protected fun Throwable.unwrapFirestoreException(): FirebaseFirestoreException? {
@@ -111,7 +138,6 @@ abstract class FirestoreEmulatorTestBase {
     const val FIRESTORE_PORT = 8085
     const val AUTH_PORT = 9099
     const val PROJECT_ID = "demo-no-project"
-    const val DEFAULT_PASSWORD = "password123"
     const val AUTH_TIMEOUT_MS = 5000L
   }
 }

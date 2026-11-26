@@ -5,4 +5,9 @@
     <string name="admob_interstitial_secondary_unit_id" translatable="false">ca-app-pub-9786472984542330/2624296233</string>
     <string name="admob_rewarded_unit_id" translatable="false">ca-app-pub-9786472984542330/7930474134</string>
     <string name="admob_banner_unit_id" translatable="false"></string>
+    <string name="unsupported_session_title">Google Sign-In Required</string>
+    <string name="unsupported_session_body">This cached account session does not use Google Sign-In and is not supported by SOGO CHAT AND MEET.</string>
+    <string name="unsupported_session_hint">Please sign out to clear this session, then sign in with your Google account to continue.</string>
+    <string name="unsupported_session_sign_out_cta">Sign Out &amp; Use Google Sign-In</string>
+    <string name="unsupported_session_signing_out">Signing out…</string>
 </resources>

@@ -15,6 +15,17 @@ const CHARLIE_UID = "charlie_789";
 const [emulatorHost, emulatorPortStr] = (process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8085").split(":");
 const emulatorPort = parseInt(emulatorPortStr, 10);
 
+function googleContext(uid, extraClaims = {}) {
+  const { firebase: extraFirebase, ...restClaims } = extraClaims;
+  return testEnv.authenticatedContext(uid, {
+    ...restClaims,
+    firebase: {
+      sign_in_provider: "google.com",
+      ...(extraFirebase || {}),
+    },
+  });
+}
+
 before(async () => {
   const rules = fs.readFileSync("./firestore.rules", "utf8");
   testEnv = await initializeTestEnvironment({
@@ -56,7 +67,7 @@ test("Unauthenticated: cannot read or write users", async () => {
 
 // 2. User Profile tests
 test("User: can create and update own profile with valid data", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
   await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).set({
     userId: ALICE_UID,
@@ -81,7 +92,7 @@ test("User: can create and update own profile with valid data", async () => {
 });
 
 test("User: cannot create profile under age 18", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
   await assertFails(aliceDb.collection("users").doc(ALICE_UID).set({
     userId: ALICE_UID,
@@ -95,7 +106,7 @@ test("User: cannot create profile under age 18", async () => {
 });
 
 test("User: cannot escalate privileges or set role to admin", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
   await assertFails(aliceDb.collection("users").doc(ALICE_UID).set({
     userId: ALICE_UID,
@@ -124,7 +135,7 @@ test("User: cannot modify another user's profile", async () => {
     });
   });
 
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
   await assertFails(bobDb.collection("users").doc(ALICE_UID).update({
     displayName: "Hacked by Bob",
     updatedAt: new Date(),
@@ -133,7 +144,7 @@ test("User: cannot modify another user's profile", async () => {
 
 // 3. User Presence Tests
 test("User Presence: owner can update presence, others cannot modify", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
   await assertSucceeds(aliceDb.collection("user_presence").doc(ALICE_UID).set({
     userId: ALICE_UID,
@@ -142,7 +153,7 @@ test("User Presence: owner can update presence, others cannot modify", async () 
     updatedAt: now,
   }));
 
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
   // Bob can view Alice's presence
   await assertSucceeds(bobDb.collection("user_presence").doc(ALICE_UID).get());
   // Bob cannot modify Alice's presence
@@ -156,7 +167,7 @@ test("User Presence: owner can update presence, others cannot modify", async () 
 test("Conversation: participants can access their private conversation", async () => {
   const now = new Date();
   const convId = "conv_alice_bob";
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
 
   await assertSucceeds(aliceDb.collection("conversations").doc(convId).set({
     conversationId: convId,
@@ -168,17 +179,17 @@ test("Conversation: participants can access their private conversation", async (
     updatedAt: now,
   }));
 
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
   await assertSucceeds(bobDb.collection("conversations").doc(convId).get());
 
   // Third party Charlie cannot read it
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
   await assertFails(charlieDb.collection("conversations").doc(convId).get());
 });
 
 test("Conversation: distinct participants enforcement ([Alice, Bob] succeeds, [Alice, Alice], 1 participant, 3 participants fail)", async () => {
   const now = new Date();
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
 
   // 1. [Alice, Bob] must succeed
   const validConvId = "conv_distinct_valid";
@@ -241,7 +252,7 @@ test("Messages: non-participant cannot read or send messages", async () => {
     });
   });
 
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   await assertSucceeds(aliceDb.collection("conversations").doc(convId).collection("messages").doc("msg1").set({
     messageId: "msg1",
     conversationId: convId,
@@ -254,7 +265,7 @@ test("Messages: non-participant cannot read or send messages", async () => {
     createdAt: now,
   }));
 
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
   await assertFails(charlieDb.collection("conversations").doc(convId).collection("messages").doc("msg1").get());
   await assertFails(charlieDb.collection("conversations").doc(convId).collection("messages").doc("msg2").set({
     messageId: "msg2",
@@ -280,7 +291,7 @@ test("Messages: forged receiverId must fail", async () => {
     });
   });
 
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   // Alice tries to send message with Charlie as receiver in Alice-Bob conversation
   await assertFails(aliceDb.collection("conversations").doc(convId).collection("messages").doc("msg_forged_rcv").set({
     messageId: "msg_forged_rcv",
@@ -320,7 +331,7 @@ test("Messages: mismatched participantUids must fail", async () => {
     });
   });
 
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   // Alice tries to supply participantUids that don't match the parent conversation
   await assertFails(aliceDb.collection("conversations").doc(convId).collection("messages").doc("msg_mismatched_parts").set({
     messageId: "msg_mismatched_parts",
@@ -359,9 +370,9 @@ test("Messages: read receipt authorization - only receiver can mark as read, sen
     });
   });
 
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
 
   // 1. Sender (Alice) trying to mark her own message as read must FAIL
   await assertFails(aliceDb.collection("conversations").doc(convId).collection("messages").doc(msgId).update({
@@ -416,8 +427,8 @@ test("Messages: reading, listing, updating, and sending must fail when either pa
     });
   });
 
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
 
   // Neither participant can list or read messages while blocked
   await assertFails(
@@ -484,7 +495,7 @@ test("Messages: reading, listing, updating, and sending must fail when either pa
 
 // 5. Blocks, Reports & Notifications
 test("Block: user can block another member and list own blocks, cannot self-block", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
   await assertFails(aliceDb.collection("user_blocks").doc(`block_${ALICE_UID}_${ALICE_UID}`).set({
     blockId: `block_${ALICE_UID}_${ALICE_UID}`,
@@ -504,12 +515,12 @@ test("Block: user can block another member and list own blocks, cannot self-bloc
   await assertSucceeds(aliceDb.collection("user_blocks").where("blockerId", "==", ALICE_UID).get());
 
   // Charlie (unrelated third party) cannot read the block record
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
   await assertFails(charlieDb.collection("user_blocks").doc("block1").get());
 });
 
 test("Reports: user can submit a report, but cannot read other users' reports", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
   await assertSucceeds(aliceDb.collection("user_reports").doc("rep1").set({
     reportId: "rep1",
@@ -520,13 +531,13 @@ test("Reports: user can submit a report, but cannot read other users' reports", 
     createdAt: now,
   }));
 
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
   // Bob cannot read the report filed against him
   await assertFails(bobDb.collection("user_reports").doc("rep1").get());
 });
 
 test("Notifications: user can only read and manage their own notifications", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
   await assertSucceeds(aliceDb.collection("notifications").doc("notif1").set({
     notificationId: "notif1",
@@ -539,7 +550,7 @@ test("Notifications: user can only read and manage their own notifications", asy
   }));
 
   // Bob cannot read Alice's notification
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
   await assertFails(bobDb.collection("notifications").doc("notif1").get());
 
   // Alice can mark her notification as read
@@ -561,7 +572,7 @@ test("Conversation: blocked users cannot create conversation or update conversat
     });
   });
 
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const convId = "conv_blocked_creation";
   await assertFails(aliceDb.collection("conversations").doc(convId).set({
     conversationId: convId,
@@ -598,7 +609,7 @@ test("Conversation: blocked users cannot create conversation or update conversat
 test("Conversation: cannot spoof lastMessageSenderId or delete shared conversation", async () => {
   const now = new Date();
   const convId = "conv_alice_bob_integrity";
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
 
   // Spoofing lastMessageSenderId as BOB_UID on create must fail
   await assertFails(aliceDb.collection("conversations").doc(convId).set({
@@ -646,7 +657,7 @@ test("Messages: sender cannot create message pre-marked as isRead=true", async (
     });
   });
 
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   await assertFails(aliceDb.collection("conversations").doc(convId).collection("messages").doc("msg_preread").set({
     messageId: "msg_preread",
     conversationId: convId,
@@ -661,8 +672,8 @@ test("Messages: sender cannot create message pre-marked as isRead=true", async (
 });
 
 test("Block: blocker can re-block (update), blocked user cannot delete block", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
   const blockId = `block_${ALICE_UID}_${BOB_UID}`;
   const now = new Date();
 
@@ -687,7 +698,7 @@ test("Block: blocker can re-block (update), blocked user cannot delete block", a
 });
 
 test("Reports: self-reporting, status tampering, update, and delete are denied", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
 
   // Self-reporting denied
@@ -728,7 +739,7 @@ test("Reports: self-reporting, status tampering, update, and delete are denied",
 });
 
 test("Notifications: cannot spoof for another user, pre-mark isRead, or alter body on update", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
   const now = new Date();
 
   // Cannot create notification targeting Bob
@@ -772,9 +783,9 @@ test("Notifications: cannot spoof for another user, pre-mark isRead, or alter bo
 
 // 7. Friend Requests & Free Video Call Signaling Rules
 test("FriendRequests: requester can send, recipient can accept, requester cannot self-accept, blocked/third-party fail", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
   const now = new Date();
   const reqId = `fr_${ALICE_UID}_${BOB_UID}`;
 
@@ -824,9 +835,9 @@ test("FriendRequests: requester can send, recipient can accept, requester cannot
 });
 
 test("CallSessions & Candidates: participants can signal free video calls, blocked & terminal state bypasses fail", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
   const now = new Date();
   const callId = "call_alice_bob_1";
 
@@ -917,8 +928,8 @@ test("CallSessions & Candidates: participants can signal free video calls, block
 // 8. Everyday Activities & Emoji Reactions Tests
 test("Activity Posts: signed-in users can post and react with emojis; unauth/spoofing/tampering blocked", async () => {
   const unauthDb = testEnv.unauthenticatedContext().firestore();
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
   const now = new Date();
   const postId = "post_daily_1";
 
@@ -1014,9 +1025,9 @@ test("Activity Posts: signed-in users can post and react with emojis; unauth/spo
 
 // 9. Chat Message Emoji Reactions Tests
 test("Chat Messages: participants can react with emojis without altering other participant's reaction or content", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
   const convId = `conv_${ALICE_UID}_${BOB_UID}`;
   const msgId = "msg_emoji_1";
   const now = new Date();
@@ -1077,9 +1088,9 @@ test("Chat Messages: participants can react with emojis without altering other p
 
 // 10. SOGO PRO Social, Gallery, Account Status, Activities Photo/Comments/Reports & Messaging Tests
 test("SOGO PRO: verification fields rejected on client writes, accountStatus owner-only, legacy docs remain updatable", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const ownerDb = testEnv.authenticatedContext("owner_admin_uid", {
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const ownerDb = googleContext("owner_admin_uid", {
     email: "gptgamestudioph@gmail.com",
     email_verified: true,
     owner: true,
@@ -1172,9 +1183,9 @@ test("SOGO PRO: verification fields rejected on client writes, accountStatus own
 });
 
 test("SOGO PRO Gallery & Social Graph: gallery_photos, user_follows, user_favorites, profile_likes, profile_visits", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
   const past = new Date(Date.now() - 1000);
 
   // Gallery photos: owner creates/deletes, signed-in members read, third-party denied
@@ -1247,9 +1258,9 @@ test("SOGO PRO Gallery & Social Graph: gallery_photos, user_follows, user_favori
 });
 
 test("SOGO PRO Activities: photo upload, comments, share counts, and activity_reports moderation", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const ownerDb = testEnv.authenticatedContext("owner_admin_uid", {
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const ownerDb = googleContext("owner_admin_uid", {
     email: "gptgamestudioph@gmail.com",
     email_verified: true,
     owner: true,
@@ -1319,9 +1330,9 @@ test("SOGO PRO Activities: photo upload, comments, share counts, and activity_re
 });
 
 test("SOGO PRO Chat, Notifications & Audit Logs: IMAGE msgs, typing/unread, SAY_HI notifications, audit logs", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const ownerDb = testEnv.authenticatedContext("owner_admin_uid", {
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const ownerDb = googleContext("owner_admin_uid", {
     email: "gptgamestudioph@gmail.com",
     email_verified: true,
     owner: true,
@@ -1402,9 +1413,9 @@ test("SOGO PRO Chat, Notifications & Audit Logs: IMAGE msgs, typing/unread, SAY_
 });
 
 test("SOGO PRO Activities collection (/activities): create, self-only likes toggle, commentIds & comments subcollection", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
   const past = new Date(Date.now() - 1000);
   const actId = "act_coffee_1";
 
@@ -1552,9 +1563,9 @@ test("SOGO PRO Activities collection (/activities): create, self-only likes togg
 // --- Legacy Profile Identity & Selfie Verification Requests (Frozen pending manual admin cleanup) ---
 test("Verification Requests: frozen for all client creates/updates/deletes; owner-only read for cleanup audit", async () => {
   const unauthDb = testEnv.unauthenticatedContext().firestore();
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const ownerDb = testEnv.authenticatedContext("owner_uid", {
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const ownerDb = googleContext("owner_uid", {
     email: "gptgamestudioph@gmail.com",
     email_verified: true,
     owner: true,
@@ -1604,9 +1615,9 @@ test("Verification Requests: frozen for all client creates/updates/deletes; owne
 
 test("Profile Visits Security: ownership, deterministic visitId, immutable identity fields, and anti-overwrite protection", async () => {
   const unauthDb = testEnv.unauthenticatedContext().firestore();
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const charlieDb = testEnv.authenticatedContext(CHARLIE_UID).firestore();
+  const aliceDb = googleContext(ALICE_UID).firestore();
+  const bobDb = googleContext(BOB_UID).firestore();
+  const charlieDb = googleContext(CHARLIE_UID).firestore();
 
   const past1 = new Date(Date.now() - 2000);
   const past2 = new Date(Date.now() - 1000);
@@ -1706,4 +1717,165 @@ test("Profile Visits Security: ownership, deterministic visitId, immutable ident
   await assertFails(unauthDb.collection("profile_visits").doc(visitId).delete());
   await assertFails(charlieDb.collection("profile_visits").doc(visitId).delete());
   await assertSucceeds(bobDb.collection("profile_visits").doc(visitId).delete());
+});
+
+test("Google Provider Enforcement: non-Google and missing provider claims denied across protected collections", async () => {
+  const past = new Date(Date.now() - 1000);
+  const convId = `conv_${ALICE_UID}_${BOB_UID}`;
+  const actId = "act_google_only_1";
+  const visitId = `visit_${ALICE_UID}_${BOB_UID}`;
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await db.collection("users").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      displayName: "Alice",
+      age: 25,
+      gender: "Female",
+      country: "Philippines",
+      accountStatus: "ACTIVE",
+      createdAt: past,
+      updatedAt: past,
+    });
+    await db.collection("conversations").doc(convId).set({
+      conversationId: convId,
+      participantUids: [ALICE_UID, BOB_UID],
+      createdAt: past,
+      updatedAt: past,
+    });
+    await db.collection("activities").doc(actId).set({
+      postId: actId,
+      userId: ALICE_UID,
+      authorId: ALICE_UID,
+      username: "AlicePH",
+      activityType: "Coffee",
+      content: "Google-only rule check",
+      likes: [],
+      commentIds: [],
+      timestamp: past,
+      createdAt: past,
+      updatedAt: past,
+    });
+    await db.collection("profile_visits").doc(visitId).set({
+      visitId,
+      visitorId: ALICE_UID,
+      visitedUserId: BOB_UID,
+      visitorName: "Alice",
+      visitedAt: past,
+    });
+    await db.collection("admin_dashboard").doc("summary").set({
+      totalAuthUsers: 10,
+      billingPlan: "SPARK",
+    });
+    await db.collection("verification_requests").doc("legacy_1").set({
+      requestId: "legacy_1",
+      userId: ALICE_UID,
+      status: "PENDING",
+      createdAt: past,
+    });
+  });
+
+  // Control: Google-authenticated member and Owner succeed
+  const googleAlice = googleContext(ALICE_UID).firestore();
+  const googleOwner = googleContext("owner_uid", {
+    email: "gptgamestudioph@gmail.com",
+    email_verified: true,
+    owner: true,
+    admin: true,
+  }).firestore();
+  await assertSucceeds(googleAlice.collection("users").doc(ALICE_UID).get());
+  await assertSucceeds(googleAlice.collection("conversations").doc(convId).get());
+  await assertSucceeds(googleAlice.collection("activities").doc(actId).get());
+  await assertSucceeds(googleAlice.collection("profile_visits").doc(visitId).get());
+  await assertSucceeds(googleOwner.collection("admin_dashboard").doc("summary").get());
+  await assertSucceeds(googleOwner.collection("verification_requests").doc("legacy_1").get());
+
+  // Non-Google and missing/malformed provider claims must be denied everywhere
+  const invalidMemberTokens = [
+    { label: "password", claims: { firebase: { sign_in_provider: "password" } } },
+    { label: "anonymous", claims: { firebase: { sign_in_provider: "anonymous" } } },
+    { label: "custom", claims: { firebase: { sign_in_provider: "custom" } } },
+    { label: "missing_firebase", claims: {} },
+    { label: "empty_firebase_map", claims: { firebase: {} } },
+    { label: "malformed_firebase_string", claims: { firebase: "google.com" } },
+  ];
+
+  for (const { claims } of invalidMemberTokens) {
+    const badAlice = testEnv.authenticatedContext(ALICE_UID, claims).firestore();
+    const badCharlie = testEnv.authenticatedContext(CHARLIE_UID, claims).firestore();
+
+    // User profile: read, create, update denied
+    await assertFails(badAlice.collection("users").doc(ALICE_UID).get());
+    await assertFails(badCharlie.collection("users").doc(CHARLIE_UID).set({
+      userId: CHARLIE_UID,
+      displayName: "Charlie",
+      age: 26,
+      gender: "Male",
+      country: "Philippines",
+      createdAt: past,
+      updatedAt: past,
+    }));
+    await assertFails(badAlice.collection("users").doc(ALICE_UID).update({
+      aboutMe: "Non-Google update",
+      updatedAt: new Date(Date.now() - 500),
+    }));
+
+    // Conversations: read and create denied
+    await assertFails(badAlice.collection("conversations").doc(convId).get());
+    await assertFails(badAlice.collection("conversations").doc(`conv_${ALICE_UID}_${CHARLIE_UID}`).set({
+      conversationId: `conv_${ALICE_UID}_${CHARLIE_UID}`,
+      participantUids: [ALICE_UID, CHARLIE_UID],
+      createdAt: past,
+      updatedAt: past,
+    }));
+
+    // Activities: read, create, and likes update denied
+    await assertFails(badAlice.collection("activities").doc(actId).get());
+    await assertFails(badAlice.collection("activities").doc("act_bad_1").set({
+      postId: "act_bad_1",
+      userId: ALICE_UID,
+      authorId: ALICE_UID,
+      username: "AlicePH",
+      activityType: "Coffee",
+      content: "Should fail",
+      likes: [],
+      commentIds: [],
+      timestamp: past,
+      createdAt: past,
+      updatedAt: past,
+    }));
+    await assertFails(badCharlie.collection("activities").doc(actId).update({
+      likes: [CHARLIE_UID],
+      updatedAt: new Date(Date.now() - 500),
+    }));
+
+    // Profile visits: read, create, and update denied
+    await assertFails(badAlice.collection("profile_visits").doc(visitId).get());
+    await assertFails(badCharlie.collection("profile_visits").doc(`visit_${CHARLIE_UID}_${BOB_UID}`).set({
+      visitId: `visit_${CHARLIE_UID}_${BOB_UID}`,
+      visitorId: CHARLIE_UID,
+      visitedUserId: BOB_UID,
+      visitorName: "Charlie",
+      visitedAt: past,
+    }));
+    await assertFails(badAlice.collection("profile_visits").doc(visitId).update({
+      visitorName: "Alice Tamper",
+      visitedAt: new Date(Date.now() - 500),
+    }));
+
+    // Owner token with valid Owner/Admin claims but non-Google / missing provider must also fail
+    const badOwner = testEnv.authenticatedContext("owner_bad_provider", {
+      email: "gptgamestudioph@gmail.com",
+      email_verified: true,
+      owner: true,
+      admin: true,
+      ...claims,
+    }).firestore();
+    await assertFails(badOwner.collection("admin_dashboard").doc("summary").get());
+    await assertFails(badOwner.collection("verification_requests").doc("legacy_1").get());
+    await assertFails(badOwner.collection("users").doc(ALICE_UID).update({
+      accountStatus: "SUSPENDED",
+      updatedAt: new Date(Date.now() - 500),
+    }));
+  }
 });
