@@ -26,6 +26,7 @@ import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -34,6 +35,7 @@ import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emptyFlow
@@ -54,6 +56,10 @@ interface SogoDataSource {
     fun requireUserId(): String
     fun observeCurrentUserProfile(userId: String): Flow<UserProfile?>
     fun observeMembers(): Flow<List<UserProfile>>
+    suspend fun refreshMembers(force: Boolean = false) {}
+    suspend fun loadMoreMembers(): Boolean = false
+    suspend fun fetchUsersByIds(userIds: List<String>): List<UserProfile> = emptyList()
+    suspend fun boostMyProfile() {}
     suspend fun saveUserProfile(profile: UserProfile)
     suspend fun updateProfilePhoto(photoUrl: String)
     suspend fun updateCoverPhoto(photoUrl: String) {}
@@ -146,6 +152,7 @@ interface SogoDataSource {
 
     // --- Everyday Activities Community Feed, Photo Upload, Comments, Shares & Emoji Reactions ---
     fun observeActivityPosts(): Flow<List<ActivityPost>> = emptyFlow()
+    suspend fun refreshActivityPosts(force: Boolean = false) {}
     fun observeMyActivityReactions(): Flow<Map<String, String>> = emptyFlow()
     suspend fun createActivityPost(
         authorProfile: UserProfile?,
@@ -177,7 +184,25 @@ class SogoRepository(
     )
 
     private val presenceMutex = Mutex()
+    private val membersMutex = Mutex()
     private val lastCommittedPresenceByUid = ConcurrentHashMap<String, Boolean>()
+    private val lastPresenceAttemptMsByUid = ConcurrentHashMap<String, Long>()
+
+    private val membersRefreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val activitiesRefreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val activityReactionsRefreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val galleryRefreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val followingRefreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val favoritesRefreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val profileLikesRefreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val profileVisitorsRefreshSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    private val cachedMemberProfiles = LinkedHashMap<String, UserProfile>()
+    private var lastMemberSnapshot: DocumentSnapshot? = null
+    private var hasMoreMemberPages = true
+    private var lastMembersFetchMs = 0L
+    private var lastActivitiesFetchMs = 0L
+    private var cachedActivityPosts: List<ActivityPost> = emptyList()
 
     override fun getCurrentUserId(): String? = auth.currentUser?.uid
 
@@ -230,24 +255,151 @@ class SogoRepository(
 
     override fun observeMembers(): Flow<List<UserProfile>> = flow {
         val uid = requireUserId()
+        emit(fetchInitialMembersPage(uid))
+        membersRefreshSignal.collect {
+            val activeUid = auth.currentUser?.uid ?: uid
+            emit(snapshotCachedMembers(activeUid))
+        }
+    }
+
+    private suspend fun fetchInitialMembersPage(uid: String): List<UserProfile> {
         val path = "users"
-        // Bounded real-time directory query keeps client memory and reads O(1) even at 50,000+ users
-        val query = db.collection("users")
-            .orderBy("updatedAt", Query.Direction.DESCENDING)
-            .limit(MEMBERS_FEED_LIMIT)
-        query.snapshots()
-            .map { snapshot ->
-                snapshot.toObjects(UserProfile::class.java)
-                    .filter { it.userId != uid }
-                    .sortedWith(compareByDescending<UserProfile> { it.isOnline }.thenBy { it.displayName.lowercase() })
-            }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, path)
+        return membersMutex.withLock {
+            try {
+                val snap = db.collection("users")
+                    .orderBy("updatedAt", Query.Direction.DESCENDING)
+                    .limit(MEMBERS_PAGE_SIZE)
+                    .get()
+                    .await()
+                cachedMemberProfiles.clear()
+                snap.toObjects(UserProfile::class.java).forEach { member ->
+                    if (member.userId.isNotBlank()) {
+                        cachedMemberProfiles[member.userId] = member
+                    }
                 }
-                throw error
+                lastMemberSnapshot = snap.documents.lastOrNull()
+                hasMoreMemberPages = snap.documents.size >= MEMBERS_PAGE_SIZE
+                lastMembersFetchMs = System.currentTimeMillis()
+                snapshotCachedMembersLocked(uid)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (auth.currentUser != null) {
+                    handleFirestoreError(e, OperationType.LIST, path)
+                }
+                throw e
             }
-            .collect { emit(it) }
+        }
+    }
+
+    private suspend fun snapshotCachedMembers(uid: String): List<UserProfile> =
+        membersMutex.withLock { snapshotCachedMembersLocked(uid) }
+
+    private fun snapshotCachedMembersLocked(uid: String): List<UserProfile> =
+        cachedMemberProfiles.values
+            .filter { it.userId != uid }
+            .sortedWith(
+                compareByDescending<UserProfile> { it.isOnline }
+                    .thenByDescending { it.updatedAt?.toDate()?.time ?: 0L }
+                    .thenBy { it.displayName.lowercase() }
+            )
+
+    override suspend fun refreshMembers(force: Boolean) {
+        val uid = requireUserId()
+        val now = System.currentTimeMillis()
+        if (!force && (now - lastMembersFetchMs) < FEED_REFRESH_COOLDOWN_MS && cachedMemberProfiles.isNotEmpty()) {
+            return
+        }
+        fetchInitialMembersPage(uid)
+        membersRefreshSignal.tryEmit(Unit)
+    }
+
+    override suspend fun loadMoreMembers(): Boolean {
+        val uid = requireUserId()
+        val cursor = membersMutex.withLock {
+            if (!hasMoreMemberPages || cachedMemberProfiles.size >= MAX_CACHED_MEMBERS) {
+                null
+            } else {
+                lastMemberSnapshot
+            }
+        } ?: return false
+
+        return try {
+            val snap = db.collection("users")
+                .orderBy("updatedAt", Query.Direction.DESCENDING)
+                .startAfter(cursor)
+                .limit(MEMBERS_PAGE_SIZE)
+                .get()
+                .await()
+            val added = membersMutex.withLock {
+                var count = 0
+                snap.toObjects(UserProfile::class.java).forEach { member ->
+                    if (member.userId.isNotBlank() &&
+                        member.userId != uid &&
+                        cachedMemberProfiles.size < MAX_CACHED_MEMBERS &&
+                        !cachedMemberProfiles.containsKey(member.userId)
+                    ) {
+                        cachedMemberProfiles[member.userId] = member
+                        count++
+                    }
+                }
+                lastMemberSnapshot = snap.documents.lastOrNull() ?: lastMemberSnapshot
+                hasMoreMemberPages = snap.documents.size >= MEMBERS_PAGE_SIZE &&
+                    cachedMemberProfiles.size < MAX_CACHED_MEMBERS
+                count > 0
+            }
+            if (added) {
+                membersRefreshSignal.tryEmit(Unit)
+            }
+            added
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) {
+                handleFirestoreError(e, OperationType.LIST, "users")
+            }
+            false
+        }
+    }
+
+    override suspend fun fetchUsersByIds(userIds: List<String>): List<UserProfile> {
+        requireUserId()
+        val cleanIds = userIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(30)
+        if (cleanIds.isEmpty()) return emptyList()
+        val results = mutableListOf<UserProfile>()
+        for (chunk in cleanIds.chunked(10)) {
+            try {
+                val snap = db.collection("users")
+                    .whereIn(FieldPath.documentId(), chunk)
+                    .get()
+                    .await()
+                results += snap.toObjects(UserProfile::class.java)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+        return results
+    }
+
+    override suspend fun boostMyProfile() {
+        val uid = requireUserId()
+        val docRef = db.collection("users").document(uid)
+        try {
+            docRef.update(
+                mapOf("updatedAt" to FieldValue.serverTimestamp())
+            ).await()
+            refreshMembers(force = true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
     }
 
     override suspend fun saveUserProfile(profile: UserProfile) {
@@ -423,8 +575,11 @@ class SogoRepository(
     override suspend fun updatePresence(isOnline: Boolean, force: Boolean) {
         val uid = auth.currentUser?.uid ?: return
         presenceMutex.withLock {
-            if (!force && lastCommittedPresenceByUid[uid] == isOnline) {
-                return
+            val nowMs = System.currentTimeMillis()
+            val lastAttemptMs = lastPresenceAttemptMsByUid[uid] ?: 0L
+            if (!force) {
+                if (lastCommittedPresenceByUid[uid] == isOnline) return
+                if ((nowMs - lastAttemptMs) < PRESENCE_THROTTLE_MS) return
             }
             val userDoc = db.collection("users").document(uid)
             val presenceDoc = db.collection("user_presence").document(uid)
@@ -433,11 +588,11 @@ class SogoRepository(
                 if (!userSnapshot.exists()) {
                     return
                 }
+                // Do NOT mutate users/{uid}.updatedAt on presence toggles so 50k users do not shuffle the discovery index
                 userDoc.update(
                     mapOf(
                         "isOnline" to isOnline,
-                        "lastActive" to FieldValue.serverTimestamp(),
-                        "updatedAt" to FieldValue.serverTimestamp()
+                        "lastActive" to FieldValue.serverTimestamp()
                     )
                 ).await()
 
@@ -450,6 +605,7 @@ class SogoRepository(
                     )
                 ).await()
                 lastCommittedPresenceByUid[uid] = isOnline
+                lastPresenceAttemptMsByUid[uid] = nowMs
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -740,6 +896,7 @@ class SogoRepository(
 
         val sub1 = db.collection("user_blocks")
             .whereEqualTo("blockerId", uid)
+            .limit(BLOCKS_LIMIT)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     if (auth.currentUser != null) {
@@ -758,6 +915,7 @@ class SogoRepository(
 
         val sub2 = db.collection("user_blocks")
             .whereEqualTo("blockedId", uid)
+            .limit(BLOCKS_LIMIT)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     if (auth.currentUser != null) {
@@ -784,6 +942,7 @@ class SogoRepository(
         val uid = requireUserId()
         val registration = db.collection("user_blocks")
             .whereEqualTo("blockerId", uid)
+            .limit(BLOCKS_LIMIT)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     if (auth.currentUser != null) {
@@ -978,18 +1137,23 @@ class SogoRepository(
             return@flow
         }
         val path = "users/$userId/gallery_photos"
-        db.collection("users").document(userId).collection("gallery_photos")
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .limit(30L)
-            .snapshots()
-            .map { snap -> snap.toObjects(GalleryPhoto::class.java) }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, path)
-                }
-                throw error
-            }
-            .collect { emit(it) }
+        suspend fun fetchGallery(): List<GalleryPhoto> = try {
+            db.collection("users").document(userId).collection("gallery_photos")
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .limit(30L)
+                .get()
+                .await()
+                .toObjects(GalleryPhoto::class.java)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) handleFirestoreError(e, OperationType.LIST, path)
+            throw e
+        }
+        emit(fetchGallery())
+        galleryRefreshSignal.collect {
+            emit(fetchGallery())
+        }
     }
 
     override suspend fun addGalleryPhoto(photoUrl: String, caption: String?): String {
@@ -1009,6 +1173,7 @@ class SogoRepository(
         }
         try {
             docRef.set(payload).await()
+            galleryRefreshSignal.tryEmit(Unit)
             return photoId
         } catch (e: CancellationException) {
             throw e
@@ -1024,6 +1189,7 @@ class SogoRepository(
         val docRef = db.collection("users").document(uid).collection("gallery_photos").document(photoId)
         try {
             docRef.delete().await()
+            galleryRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1034,22 +1200,23 @@ class SogoRepository(
 
     override fun observeFollowingIds(): Flow<Set<String>> = flow {
         val uid = requireUserId()
-        db.collection("user_follows")
-            .whereEqualTo("followerId", uid)
-            .limit(150L)
-            .snapshots()
-            .map { snap ->
-                snap.toObjects(FollowRecord::class.java)
-                    .mapNotNull { it.followingId.takeIf(String::isNotBlank) }
-                    .toSet()
-            }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, "user_follows")
-                }
-                throw error
-            }
-            .collect { emit(it) }
+        suspend fun fetchFollowing(): Set<String> = try {
+            db.collection("user_follows")
+                .whereEqualTo("followerId", uid)
+                .limit(150L)
+                .get()
+                .await()
+                .toObjects(FollowRecord::class.java)
+                .mapNotNull { it.followingId.takeIf(String::isNotBlank) }
+                .toSet()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) handleFirestoreError(e, OperationType.LIST, "user_follows")
+            throw e
+        }
+        emit(fetchFollowing())
+        followingRefreshSignal.collect { emit(fetchFollowing()) }
     }
 
     override suspend fun toggleFollow(targetUid: String, currentlyFollowing: Boolean) {
@@ -1070,6 +1237,7 @@ class SogoRepository(
                     )
                 ).await()
             }
+            followingRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1080,22 +1248,23 @@ class SogoRepository(
 
     override fun observeFavoriteIds(): Flow<Set<String>> = flow {
         val uid = requireUserId()
-        db.collection("user_favorites")
-            .whereEqualTo("userId", uid)
-            .limit(150L)
-            .snapshots()
-            .map { snap ->
-                snap.toObjects(FavoriteRecord::class.java)
-                    .mapNotNull { it.targetUserId.takeIf(String::isNotBlank) }
-                    .toSet()
-            }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, "user_favorites")
-                }
-                throw error
-            }
-            .collect { emit(it) }
+        suspend fun fetchFavorites(): Set<String> = try {
+            db.collection("user_favorites")
+                .whereEqualTo("userId", uid)
+                .limit(150L)
+                .get()
+                .await()
+                .toObjects(FavoriteRecord::class.java)
+                .mapNotNull { it.targetUserId.takeIf(String::isNotBlank) }
+                .toSet()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) handleFirestoreError(e, OperationType.LIST, "user_favorites")
+            throw e
+        }
+        emit(fetchFavorites())
+        favoritesRefreshSignal.collect { emit(fetchFavorites()) }
     }
 
     override suspend fun toggleFavorite(targetUid: String, currentlyFavorited: Boolean) {
@@ -1116,6 +1285,7 @@ class SogoRepository(
                     )
                 ).await()
             }
+            favoritesRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1126,41 +1296,43 @@ class SogoRepository(
 
     override fun observeProfileLikesReceived(): Flow<List<ProfileLikeRecord>> = flow {
         val uid = requireUserId()
-        db.collection("profile_likes")
-            .whereEqualTo("likedUserId", uid)
-            .limit(150L)
-            .snapshots()
-            .map { snap ->
-                snap.toObjects(ProfileLikeRecord::class.java)
-                    .sortedByDescending { it.createdAt?.toDate()?.time ?: 0L }
-            }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, "profile_likes")
-                }
-                throw error
-            }
-            .collect { emit(it) }
+        suspend fun fetchReceived(): List<ProfileLikeRecord> = try {
+            db.collection("profile_likes")
+                .whereEqualTo("likedUserId", uid)
+                .limit(150L)
+                .get()
+                .await()
+                .toObjects(ProfileLikeRecord::class.java)
+                .sortedByDescending { it.createdAt?.toDate()?.time ?: 0L }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) handleFirestoreError(e, OperationType.LIST, "profile_likes")
+            throw e
+        }
+        emit(fetchReceived())
+        profileLikesRefreshSignal.collect { emit(fetchReceived()) }
     }
 
     override fun observeProfileLikesGiven(): Flow<Set<String>> = flow {
         val uid = requireUserId()
-        db.collection("profile_likes")
-            .whereEqualTo("likerId", uid)
-            .limit(150L)
-            .snapshots()
-            .map { snap ->
-                snap.toObjects(ProfileLikeRecord::class.java)
-                    .mapNotNull { it.likedUserId.takeIf(String::isNotBlank) }
-                    .toSet()
-            }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, "profile_likes")
-                }
-                throw error
-            }
-            .collect { emit(it) }
+        suspend fun fetchGiven(): Set<String> = try {
+            db.collection("profile_likes")
+                .whereEqualTo("likerId", uid)
+                .limit(150L)
+                .get()
+                .await()
+                .toObjects(ProfileLikeRecord::class.java)
+                .mapNotNull { it.likedUserId.takeIf(String::isNotBlank) }
+                .toSet()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) handleFirestoreError(e, OperationType.LIST, "profile_likes")
+            throw e
+        }
+        emit(fetchGiven())
+        profileLikesRefreshSignal.collect { emit(fetchGiven()) }
     }
 
     override suspend fun toggleProfileLike(
@@ -1199,6 +1371,7 @@ class SogoRepository(
                     data = uid
                 )
             }
+            profileLikesRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1209,21 +1382,22 @@ class SogoRepository(
 
     override fun observeProfileVisitors(): Flow<List<ProfileVisitorRecord>> = flow {
         val uid = requireUserId()
-        db.collection("profile_visits")
-            .whereEqualTo("visitedUserId", uid)
-            .limit(100L)
-            .snapshots()
-            .map { snap ->
-                snap.toObjects(ProfileVisitorRecord::class.java)
-                    .sortedByDescending { it.visitedAt?.toDate()?.time ?: 0L }
-            }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, "profile_visits")
-                }
-                throw error
-            }
-            .collect { emit(it) }
+        suspend fun fetchVisitors(): List<ProfileVisitorRecord> = try {
+            db.collection("profile_visits")
+                .whereEqualTo("visitedUserId", uid)
+                .limit(100L)
+                .get()
+                .await()
+                .toObjects(ProfileVisitorRecord::class.java)
+                .sortedByDescending { it.visitedAt?.toDate()?.time ?: 0L }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) handleFirestoreError(e, OperationType.LIST, "profile_visits")
+            throw e
+        }
+        emit(fetchVisitors())
+        profileVisitorsRefreshSignal.collect { emit(fetchVisitors()) }
     }
 
     override suspend fun recordProfileVisit(targetUid: String, myProfile: UserProfile?) {
@@ -1251,6 +1425,7 @@ class SogoRepository(
                 body = "$visitorName checked out your profile on SOGO CHAT & MEET.",
                 data = uid
             )
+            profileVisitorsRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -1529,42 +1704,66 @@ class SogoRepository(
 
     override fun observeActivityPosts(): Flow<List<ActivityPost>> = flow {
         requireUserId()
+        emit(fetchActivityPostsSnapshot())
+        activitiesRefreshSignal.collect {
+            emit(fetchActivityPostsSnapshot())
+        }
+    }
+
+    private suspend fun fetchActivityPostsSnapshot(): List<ActivityPost> {
         val path = ACTIVITIES_COLLECTION
-        db.collection(ACTIVITIES_COLLECTION)
-            .orderBy("createdAt", Query.Direction.DESCENDING)
-            .limit(ACTIVITY_POSTS_LIMIT)
-            .snapshots()
-            .map { snapshot -> snapshot.toObjects(ActivityPost::class.java) }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, path)
-                }
-                throw error
+        return try {
+            val snap = db.collection(ACTIVITIES_COLLECTION)
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .limit(ACTIVITY_POSTS_LIMIT)
+                .get()
+                .await()
+            cachedActivityPosts = snap.toObjects(ActivityPost::class.java)
+            lastActivitiesFetchMs = System.currentTimeMillis()
+            cachedActivityPosts
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) {
+                handleFirestoreError(e, OperationType.LIST, path)
             }
-            .collect { emit(it) }
+            throw e
+        }
+    }
+
+    override suspend fun refreshActivityPosts(force: Boolean) {
+        requireUserId()
+        val now = System.currentTimeMillis()
+        if (!force && (now - lastActivitiesFetchMs) < FEED_REFRESH_COOLDOWN_MS && cachedActivityPosts.isNotEmpty()) {
+            return
+        }
+        fetchActivityPostsSnapshot()
+        activitiesRefreshSignal.tryEmit(Unit)
     }
 
     override fun observeMyActivityReactions(): Flow<Map<String, String>> = flow {
         val uid = requireUserId()
         val path = "users/$uid/activity_reactions"
-        db.collection("users").document(uid).collection("activity_reactions")
-            .orderBy("updatedAt", Query.Direction.DESCENDING)
-            .limit(ACTIVITY_REACTIONS_LIMIT)
-            .snapshots()
-            .map { snapshot ->
-                snapshot.documents.mapNotNull { doc ->
+        suspend fun fetchReactions(): Map<String, String> = try {
+            db.collection("users").document(uid).collection("activity_reactions")
+                .orderBy("updatedAt", Query.Direction.DESCENDING)
+                .limit(ACTIVITY_REACTIONS_LIMIT)
+                .get()
+                .await()
+                .documents
+                .mapNotNull { doc ->
                     val postId = doc.getString("postId") ?: doc.id
                     val emoji = doc.getString("emoji")
                     if (!emoji.isNullOrBlank()) postId to emoji else null
                 }.toMap()
-            }
-            .catch { error ->
-                if (error !is CancellationException && auth.currentUser != null) {
-                    handleFirestoreError(error, OperationType.LIST, path)
-                }
-                throw error
-            }
-            .collect { emit(it) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (auth.currentUser != null) handleFirestoreError(e, OperationType.LIST, path)
+            throw e
+        }
+        emit(fetchReactions())
+        activityReactionsRefreshSignal.collect { emit(fetchReactions()) }
     }
 
     override suspend fun createActivityPost(
@@ -1622,6 +1821,7 @@ class SogoRepository(
 
         try {
             docRef.set(payload).await()
+            activitiesRefreshSignal.tryEmit(Unit)
             return postId
         } catch (e: CancellationException) {
             throw e
@@ -1658,6 +1858,7 @@ class SogoRepository(
                 )
                 null
             }.await()
+            activitiesRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1738,6 +1939,8 @@ class SogoRepository(
                 )
                 null
             }.await()
+            activitiesRefreshSignal.tryEmit(Unit)
+            activityReactionsRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1758,6 +1961,8 @@ class SogoRepository(
                 throw e
             } catch (_: Exception) {}
             postRef.delete().await()
+            activitiesRefreshSignal.tryEmit(Unit)
+            activityReactionsRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1818,6 +2023,7 @@ class SogoRepository(
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
+            activitiesRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1849,6 +2055,7 @@ class SogoRepository(
                 )
                 null
             }.await()
+            activitiesRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1868,6 +2075,7 @@ class SogoRepository(
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
+            activitiesRefreshSignal.tryEmit(Unit)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -2139,7 +2347,11 @@ class SogoRepository(
 
     companion object {
         private const val RECENT_LOGIN_THRESHOLD_MS = 4 * 60 * 1000L
-        private const val MEMBERS_FEED_LIMIT = 120L
+        private const val MEMBERS_PAGE_SIZE = 60L
+        private const val MAX_CACHED_MEMBERS = 300
+        private const val FEED_REFRESH_COOLDOWN_MS = 10_000L
+        private const val PRESENCE_THROTTLE_MS = 15_000L
+        private const val BLOCKS_LIMIT = 250L
         private const val CONVERSATIONS_LIMIT = 40L
         private const val MESSAGES_LIMIT = 100L
         private const val NOTIFICATIONS_LIMIT = 30L

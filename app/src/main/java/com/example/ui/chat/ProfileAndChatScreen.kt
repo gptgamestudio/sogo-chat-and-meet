@@ -41,6 +41,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AddReaction
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -49,6 +50,7 @@ import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Favorite
@@ -95,10 +97,12 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -114,9 +118,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.data.matching.MatchRecommender
+import kotlinx.coroutines.launch
 import com.example.data.model.ChatMessage
 import com.example.data.model.FriendStatus
 import com.example.data.model.GalleryPhoto
@@ -171,6 +178,7 @@ fun ProfileAndChatScreen(
 
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     val partnerIsOnline = MemberPresenceFormatter.isEffectivelyOnline(partner)
     val chatPhotoPicker = rememberProfilePhotoPickerController { dataUri ->
         viewModel.sendImageMessage(dataUri)
@@ -178,6 +186,8 @@ fun ProfileAndChatScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var showEmojiDrawer by remember { mutableStateOf(false) }
+    var showIcebreakers by remember { mutableStateOf(false) }
+    var lightboxImageUrl by remember { mutableStateOf<String?>(null) }
     var showOverflowMenu by remember { mutableStateOf(false) }
     var showBlockConfirmDialog by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
@@ -187,6 +197,57 @@ fun ProfileAndChatScreen(
     var pendingContentReportMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var contentReportReason by remember { mutableStateOf("Harassment or abusive language") }
     var contentReportDetails by remember { mutableStateOf("") }
+
+    val showScrollToLatest by remember(uiState.messages.size) {
+        derivedStateOf {
+            val total = uiState.messages.size
+            if (total <= 4) false
+            else {
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: total
+                lastVisible < total - 2
+            }
+        }
+    }
+
+    if (lightboxImageUrl != null) {
+        Dialog(
+            onDismissRequest = { lightboxImageUrl = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.94f))
+                    .clickable { lightboxImageUrl = null }
+                    .testTag("chat_photo_lightbox"),
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = lightboxImageUrl,
+                    contentDescription = "Full screen shared photo",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                )
+                IconButton(
+                    onClick = { lightboxImageUrl = null },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(20.dp)
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MatteBlackSurface.copy(alpha = 0.85f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close photo",
+                        tint = GoldLight
+                    )
+                }
+            }
+        }
+    }
 
     if (chatPhotoPicker.showSourceChooser) {
         ProfilePhotoSourceDialog(
@@ -966,86 +1027,115 @@ fun ProfileAndChatScreen(
                 }
             }
 
-            // Real-Time Messages Feed
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                state = listState,
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (uiState.isBlocked) {
-                    item {
-                        Box(
+            val vibeMatch = remember(myProfile, partner) {
+                MatchRecommender.scoreCandidate(myProfile, partner)
+            }
+            if (!uiState.isBlocked && myProfile != null) {
+                val vibePercent = ((vibeMatch.matchScore.coerceAtLeast(15) * 100) / 100).coerceIn(55, 99)
+                val mutualLabel = if (vibeMatch.mutualInterests.isNotEmpty()) {
+                    "Shared: ${vibeMatch.mutualInterests.take(3).joinToString(", ")}"
+                } else {
+                    partner.lookingFor?.takeIf { it.isNotBlank() } ?: "Say hi to spark a conversation"
+                }
+                Surface(
+                    color = BurgundyDark.copy(alpha = 0.65f),
+                    border = BorderStroke(1.dp, OutlineGold.copy(alpha = 0.45f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp)
+                        .testTag("chat_compatibility_strip")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "💘 $vibePercent% Match • $mutualLabel",
+                            color = GoldLight,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (showIcebreakers) BurgundyPrimary else MatteBlackSurfaceVariant,
+                            border = BorderStroke(1.dp, OutlineGold),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 40.dp)
-                                .testTag("blocked_chat_empty_state"),
-                            contentAlignment = Alignment.Center
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { showIcebreakers = !showIcebreakers }
+                                .testTag("chat_icebreakers_toggle")
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color(0xFF3A1219),
-                                    modifier = Modifier.size(60.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Block,
-                                        contentDescription = null,
-                                        tint = AlertRed,
-                                        modifier = Modifier.padding(16.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = "User Blocked",
-                                    color = TextWhite,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = "Dating Icebreakers",
+                                    tint = GoldLight,
+                                    modifier = Modifier.size(12.dp)
                                 )
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Incoming chat messages and profile discovery for ${partner.displayName} are blocked in Firestore.",
-                                    color = TextMuted,
-                                    fontSize = 12.sp,
-                                    textAlign = TextAlign.Center
+                                    text = "Icebreakers",
+                                    color = GoldLight,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
                     }
-                } else {
-                    if (uiState.messages.isEmpty()) {
+                }
+            }
+
+            // Real-Time Messages Feed with Scroll-to-Latest FAB
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (uiState.isBlocked) {
                         item {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 32.dp),
+                                    .padding(vertical = 40.dp)
+                                    .testTag("blocked_chat_empty_state"),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Surface(
                                         shape = CircleShape,
-                                        color = MatteBlackSurfaceVariant,
-                                        modifier = Modifier.size(56.dp)
+                                        color = Color(0xFF3A1219),
+                                        modifier = Modifier.size(60.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.Security,
+                                            imageVector = Icons.Default.Block,
                                             contentDescription = null,
-                                            tint = GoldAccent,
-                                            modifier = Modifier.padding(14.dp)
+                                            tint = AlertRed,
+                                            modifier = Modifier.padding(16.dp)
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(12.dp))
                                     Text(
-                                        text = "Private End-to-End Chat",
+                                        text = "User Blocked",
                                         color = TextWhite,
-                                        fontSize = 15.sp,
+                                        fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "Say kumusta to ${partner.displayName}! Messages are private and securely stored.",
+                                        text = "Incoming chat messages and profile discovery for ${partner.displayName} are blocked in Firestore.",
                                         color = TextMuted,
                                         fontSize = 12.sp,
                                         textAlign = TextAlign.Center
@@ -1053,21 +1143,99 @@ fun ProfileAndChatScreen(
                                 }
                             }
                         }
-                    }
-
-                    val currentUid = viewModel.getCurrentUserId()
-                    items(items = uiState.messages, key = { it.messageId }) { msg ->
-                        ChatMessageBubble(
-                            message = msg,
-                            isFromMe = msg.senderId != partner.userId,
-                            currentUserId = currentUid,
-                            onToggleReaction = { emoji ->
-                                viewModel.toggleMessageReaction(msg.messageId, emoji)
-                            },
-                            onReportContent = { flagged ->
-                                pendingContentReportMessage = flagged
+                    } else {
+                        if (uiState.messages.isEmpty()) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 32.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = MatteBlackSurfaceVariant,
+                                            modifier = Modifier.size(56.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Security,
+                                                contentDescription = null,
+                                                tint = GoldAccent,
+                                                modifier = Modifier.padding(14.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Text(
+                                            text = "Private End-to-End Chat",
+                                            color = TextWhite,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Say kumusta to ${partner.displayName}! Messages are private and securely stored.",
+                                            color = TextMuted,
+                                            fontSize = 12.sp,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
                             }
-                        )
+                        }
+
+                        val currentUid = viewModel.getCurrentUserId()
+                        items(items = uiState.messages, key = { it.messageId }) { msg ->
+                            ChatMessageBubble(
+                                message = msg,
+                                isFromMe = msg.senderId != partner.userId,
+                                currentUserId = currentUid,
+                                onImageClick = { url -> lightboxImageUrl = url },
+                                onToggleReaction = { emoji ->
+                                    viewModel.toggleMessageReaction(msg.messageId, emoji)
+                                },
+                                onReportContent = { flagged ->
+                                    pendingContentReportMessage = flagged
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (showScrollToLatest && !uiState.isBlocked && uiState.messages.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = BurgundyPrimary,
+                        border = BorderStroke(1.dp, GoldAccent),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 14.dp, bottom = 10.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable {
+                                coroutineScope.launch {
+                                    listState.animateScrollToItem((uiState.messages.size - 1).coerceAtLeast(0))
+                                }
+                            }
+                            .testTag("chat_scroll_to_latest_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Scroll to latest messages",
+                                tint = GoldLight,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Latest",
+                                color = GoldLight,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -1134,6 +1302,16 @@ fun ProfileAndChatScreen(
                             }
                         }
                     }
+                }
+
+                AnimatedVisibility(visible = showIcebreakers) {
+                    DatingIcebreakersBar(
+                        partnerName = partner.displayName,
+                        onSelectPrompt = { prompt ->
+                            viewModel.onInputTextChanged(prompt)
+                            showIcebreakers = false
+                        }
+                    )
                 }
 
                 // Quick Dating Stickers & Emojis Bar
@@ -1790,6 +1968,7 @@ fun ChatMessageBubble(
     message: ChatMessage,
     isFromMe: Boolean,
     currentUserId: String? = null,
+    onImageClick: (String) -> Unit = {},
     onToggleReaction: (String) -> Unit = {},
     onReportContent: (ChatMessage) -> Unit = {}
 ) {
@@ -1854,14 +2033,16 @@ fun ChatMessageBubble(
                 Column(modifier = Modifier.padding(12.dp)) {
                     when (message.type) {
                         "IMAGE" -> {
-                            if (!message.mediaUrl.isNullOrBlank()) {
+                            val imageUrl = message.mediaUrl
+                            if (!imageUrl.isNullOrBlank()) {
                                 AsyncImage(
-                                    model = message.mediaUrl,
-                                    contentDescription = "Shared image",
+                                    model = imageUrl,
+                                    contentDescription = "Shared image (tap to view full screen)",
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(180.dp)
-                                        .clip(RoundedCornerShape(12.dp)),
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { onImageClick(imageUrl) },
                                     contentScale = ContentScale.Crop
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
@@ -2102,6 +2283,49 @@ fun ChatMessageBubble(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun DatingIcebreakersBar(
+    partnerName: String,
+    onSelectPrompt: (String) -> Unit
+) {
+    val firstName = partnerName.trim().substringBefore(" ").ifBlank { "there" }
+    val prompts = listOf(
+        "Kumusta $firstName! Coffee or milktea tayo soon? ☕",
+        "What's your ideal weekend date? ✨",
+        "Anong paborito mong pagkain or hangout spot? 🍽️",
+        "May free time ka ba mamaya for a quick video call? 📹",
+        "Favorite song or movie mo lately? 🎬"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BurgundyDark.copy(alpha = 0.55f))
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("chat_icebreakers_bar"),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        prompts.forEach { prompt ->
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MatteBlackSurfaceVariant,
+                border = BorderStroke(1.dp, GoldAccent.copy(alpha = 0.65f)),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable { onSelectPrompt(prompt) }
+            ) {
+                Text(
+                    text = prompt,
+                    color = GoldLight,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
             }
         }
     }

@@ -35,7 +35,10 @@ class AdMobManagerTest {
             AdMobConfig.PROD_REWARDED_UNIT_ID,
             context.getString(R.string.admob_rewarded_unit_id)
         )
-        assertEquals("", context.getString(R.string.admob_banner_unit_id))
+        assertEquals(
+            AdMobConfig.PROD_BANNER_UNIT_ID,
+            context.getString(R.string.admob_banner_unit_id)
+        )
     }
 
     @Test
@@ -52,7 +55,7 @@ class AdMobManagerTest {
         assertEquals("ca-app-pub-9786472984542330/7764767269", releaseUnits.interstitialPrimaryId)
         assertEquals("ca-app-pub-9786472984542330/2624296233", releaseUnits.interstitialSecondaryId)
         assertEquals("ca-app-pub-9786472984542330/7930474134", releaseUnits.rewardedId)
-        assertEquals("", releaseUnits.bannerId)
+        assertEquals("ca-app-pub-9786472984542330/7035475658", releaseUnits.bannerId)
     }
 
     @Test
@@ -103,5 +106,24 @@ class AdMobManagerTest {
         }
 
         assertEquals(1, callbackCount)
+    }
+
+    @Test
+    fun spendRewardCredit_persistsAndDecrementsBalance() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = context.getSharedPreferences("sogo_admob_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putInt("reward_credits", 2).commit()
+
+        val manager1 = AdMobManager(context, isDebug = true)
+        assertEquals(2, manager1.rewardCredits.value)
+        assertTrue(manager1.spendRewardCredit(1))
+        assertEquals(1, manager1.rewardCredits.value)
+
+        // New instance restores persisted credit balance
+        val manager2 = AdMobManager(context, isDebug = true)
+        assertEquals(1, manager2.rewardCredits.value)
+        assertTrue(manager2.spendRewardCredit(1))
+        assertFalse(manager2.spendRewardCredit(1))
+        assertEquals(0, manager2.rewardCredits.value)
     }
 }

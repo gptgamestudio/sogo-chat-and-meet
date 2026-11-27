@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.data.model.CallSession
 import com.example.data.model.UserProfile
 import com.example.data.repository.SogoDataSource
@@ -94,6 +95,7 @@ class CallViewModel(
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     private var iceObserverJob: Job? = null
+    private var iceReconnectJob: Job? = null
     private var timerJob: Job? = null
 
     private val processedCandidateIds = Collections.synchronizedSet(mutableSetOf<String>())
@@ -528,11 +530,22 @@ class CallViewModel(
             .createPeerConnectionFactory()
         peerConnectionFactory = factory
 
-        val iceServers = listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
-        )
+        val iceServers = buildList {
+            add(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer())
+            add(PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer())
+            add(PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer())
+            add(PeerConnection.IceServer.builder("stun:stun3.l.google.com:19302").createIceServer())
+            add(PeerConnection.IceServer.builder("stun:stun4.l.google.com:19302").createIceServer())
+            val turnUrl = runCatching { appContext.getString(R.string.webrtc_turn_url).trim() }.getOrDefault("")
+            if (turnUrl.isNotBlank()) {
+                val turnUser = runCatching { appContext.getString(R.string.webrtc_turn_username).trim() }.getOrDefault("")
+                val turnCred = runCatching { appContext.getString(R.string.webrtc_turn_credential).trim() }.getOrDefault("")
+                val builder = PeerConnection.IceServer.builder(turnUrl)
+                if (turnUser.isNotBlank()) builder.setUsername(turnUser)
+                if (turnCred.isNotBlank()) builder.setPassword(turnCred)
+                add(builder.createIceServer())
+            }
+        }
         val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
@@ -544,6 +557,8 @@ class CallViewModel(
                 if (newState == PeerConnection.IceConnectionState.CONNECTED ||
                     newState == PeerConnection.IceConnectionState.COMPLETED
                 ) {
+                    iceReconnectJob?.cancel()
+                    iceReconnectJob = null
                     viewModelScope.launch {
                         startCallTimerIfNeeded()
                         _uiState.update {
@@ -552,10 +567,22 @@ class CallViewModel(
                             } else it
                         }
                     }
-                } else if (newState == PeerConnection.IceConnectionState.FAILED) {
+                } else if (newState == PeerConnection.IceConnectionState.FAILED ||
+                    newState == PeerConnection.IceConnectionState.DISCONNECTED
+                ) {
                     viewModelScope.launch {
                         _uiState.update {
                             it.copy(statusLabel = "Reconnecting network...")
+                        }
+                    }
+                    if (iceReconnectJob?.isActive != true) {
+                        iceReconnectJob = viewModelScope.launch {
+                            delay(ICE_RECONNECT_TIMEOUT_MS)
+                            val callId = activeCallId
+                            if (callId != null && _uiState.value.phase != CallPhase.IDLE) {
+                                runCatching { repository.updateCallStatus(callId, "ENDED") }
+                                teardownWebRtcAndReset("Call ended: peer network unreachable (strict NAT/Wi-Fi). Please try again.")
+                            }
                         }
                     }
                 }
@@ -764,6 +791,8 @@ class CallViewModel(
     private fun teardownWebRtcAndReset(errorNotice: String? = null) {
         iceObserverJob?.cancel()
         iceObserverJob = null
+        iceReconnectJob?.cancel()
+        iceReconnectJob = null
         timerJob?.cancel()
         timerJob = null
 
@@ -827,5 +856,6 @@ class CallViewModel(
     companion object {
         private const val TAG = "SogoWebRtcCall"
         private const val MAX_RING_AGE_MS = 5 * 60 * 1000L
+        private const val ICE_RECONNECT_TIMEOUT_MS = 18_000L
     }
 }

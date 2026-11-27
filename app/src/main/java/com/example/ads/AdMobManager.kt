@@ -18,6 +18,7 @@ import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,6 +42,7 @@ object AdMobConfig {
     const val PROD_INTERSTITIAL_PRIMARY_UNIT_ID = "ca-app-pub-9786472984542330/7764767269"
     const val PROD_INTERSTITIAL_SECONDARY_UNIT_ID = "ca-app-pub-9786472984542330/2624296233"
     const val PROD_REWARDED_UNIT_ID = "ca-app-pub-9786472984542330/7930474134"
+    const val PROD_BANNER_UNIT_ID = "ca-app-pub-9786472984542330/7035475658"
 
     const val MIN_SESSION_WARMUP_MS = 20_000L
     const val MIN_INTERSTITIAL_INTERVAL_MS = 90_000L
@@ -85,6 +87,7 @@ class AdMobManager(
     private val clockMs: () -> Long = { System.currentTimeMillis() }
 ) {
     private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val unitIds: AdUnitIds = AdMobConfig.resolveUnitIds(appContext, isDebug)
@@ -102,6 +105,9 @@ class AdMobManager(
     private var isLoadingPrimaryInterstitial = false
     private var isLoadingSecondaryInterstitial = false
     private var isLoadingRewarded = false
+    private var primaryRetryCount = 0
+    private var secondaryRetryCount = 0
+    private var rewardedRetryCount = 0
 
     private val _isInterstitialReady = MutableStateFlow(false)
     val isInterstitialReady: StateFlow<Boolean> = _isInterstitialReady.asStateFlow()
@@ -109,7 +115,7 @@ class AdMobManager(
     private val _isRewardedReady = MutableStateFlow(false)
     val isRewardedReady: StateFlow<Boolean> = _isRewardedReady.asStateFlow()
 
-    private val _rewardCredits = MutableStateFlow(0)
+    private val _rewardCredits = MutableStateFlow(prefs.getInt(KEY_REWARD_CREDITS, 0).coerceAtLeast(0))
     val rewardCredits: StateFlow<Int> = _rewardCredits.asStateFlow()
 
     private val _adStatusMessage = MutableStateFlow<String?>(null)
@@ -137,6 +143,24 @@ class AdMobManager(
         loadRewardedAd()
     }
 
+    fun ensureAdsLoaded() {
+        if (!isInitialized) {
+            initialize()
+        } else {
+            preloadAll()
+        }
+    }
+
+    fun spendRewardCredit(amount: Int = 1): Boolean {
+        if (amount <= 0) return false
+        val current = _rewardCredits.value
+        if (current < amount) return false
+        val updated = (current - amount).coerceAtLeast(0)
+        _rewardCredits.value = updated
+        prefs.edit().putInt(KEY_REWARD_CREDITS, updated).apply()
+        return true
+    }
+
     fun clearStatusMessage() {
         _adStatusMessage.value = null
     }
@@ -156,6 +180,7 @@ class AdMobManager(
                 object : InterstitialAdLoadCallback() {
                     override fun onAdLoaded(ad: InterstitialAd) {
                         isLoadingPrimaryInterstitial = false
+                        primaryRetryCount = 0
                         primaryInterstitial = ad
                         updateInterstitialReadyFlag()
                     }
@@ -165,6 +190,13 @@ class AdMobManager(
                         primaryInterstitial = null
                         updateInterstitialReadyFlag()
                         Log.d(TAG, "Primary interstitial failed to load: code=${error.code}")
+                        if (primaryRetryCount < MAX_LOAD_RETRIES) {
+                            primaryRetryCount++
+                            scope.launch {
+                                delay(RETRY_DELAY_MS)
+                                loadPrimaryInterstitial()
+                            }
+                        }
                     }
                 }
             )
@@ -185,6 +217,7 @@ class AdMobManager(
                 object : InterstitialAdLoadCallback() {
                     override fun onAdLoaded(ad: InterstitialAd) {
                         isLoadingSecondaryInterstitial = false
+                        secondaryRetryCount = 0
                         secondaryInterstitial = ad
                         updateInterstitialReadyFlag()
                     }
@@ -194,6 +227,13 @@ class AdMobManager(
                         secondaryInterstitial = null
                         updateInterstitialReadyFlag()
                         Log.d(TAG, "Secondary interstitial failed to load: code=${error.code}")
+                        if (secondaryRetryCount < MAX_LOAD_RETRIES) {
+                            secondaryRetryCount++
+                            scope.launch {
+                                delay(RETRY_DELAY_MS)
+                                loadSecondaryInterstitial()
+                            }
+                        }
                     }
                 }
             )
@@ -214,6 +254,7 @@ class AdMobManager(
                 object : RewardedAdLoadCallback() {
                     override fun onAdLoaded(ad: RewardedAd) {
                         isLoadingRewarded = false
+                        rewardedRetryCount = 0
                         rewardedAd = ad
                         _isRewardedReady.value = true
                     }
@@ -223,6 +264,13 @@ class AdMobManager(
                         rewardedAd = null
                         _isRewardedReady.value = false
                         Log.d(TAG, "Rewarded ad failed to load: code=${error.code}")
+                        if (rewardedRetryCount < MAX_LOAD_RETRIES) {
+                            rewardedRetryCount++
+                            scope.launch {
+                                delay(RETRY_DELAY_MS)
+                                loadRewardedAd()
+                            }
+                        }
                     }
                 }
             )
@@ -312,14 +360,20 @@ class AdMobManager(
 
         ad.show(activity) { rewardItem ->
             val earned = rewardItem.amount.coerceAtLeast(1)
-            _rewardCredits.value += earned
-            _adStatusMessage.value = "Thank you for supporting SOGO CHAT! +$earned ${rewardItem.type} earned."
+            val updated = _rewardCredits.value + earned
+            _rewardCredits.value = updated
+            prefs.edit().putInt(KEY_REWARD_CREDITS, updated).apply()
+            _adStatusMessage.value = "Thank you for supporting SOGO CHAT! +$earned ⭐ earned (use it to Boost Profile!)."
             onRewardEarned(earned)
         }
     }
 
     companion object {
         private const val TAG = "AdMobManager"
+        private const val PREFS_NAME = "sogo_admob_prefs"
+        private const val KEY_REWARD_CREDITS = "reward_credits"
+        private const val MAX_LOAD_RETRIES = 3
+        private const val RETRY_DELAY_MS = 15_000L
     }
 }
 

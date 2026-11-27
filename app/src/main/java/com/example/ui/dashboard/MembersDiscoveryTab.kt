@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.HowToReg
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -114,6 +115,7 @@ fun MembersDiscoveryTab(
     onToggleProfileLike: (UserProfile) -> Unit,
     onSayHi: (UserProfile) -> Unit,
     onBlockMember: (UserProfile) -> Unit,
+    onRefreshFeed: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -130,7 +132,7 @@ fun MembersDiscoveryTab(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "DISCOVER MEMBERS",
                             color = GoldLight,
@@ -144,8 +146,24 @@ fun MembersDiscoveryTab(
                             fontSize = 11.sp
                         )
                     }
-                    TextButton(onClick = onResetFilters) {
-                        Text("Reset Filters", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onRefreshFeed,
+                            enabled = !uiState.isRefreshingFeed,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("discovery_refresh_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh members",
+                                tint = if (uiState.isRefreshingFeed) TextDim else GoldAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        TextButton(onClick = onResetFilters) {
+                            Text("Reset Filters", color = GoldAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
@@ -248,10 +266,16 @@ fun MembersDiscoveryTab(
                 items = uiState.pagedFilteredMembers,
                 key = { "member_row_${it.userId}" }
             ) { member ->
-                val mutualInterests = MatchRecommender.computeMutualInterests(uiState.currentUserProfile, member)
+                val scored = MatchRecommender.scoreCandidate(uiState.currentUserProfile, member)
+                val matchPercent = if (uiState.currentUserProfile != null) {
+                    ((scored.matchScore.coerceAtLeast(15) * 100) / 100).coerceIn(55, 99)
+                } else {
+                    0
+                }
                 ProMemberDiscoveryCard(
                     member = member,
-                    mutualInterests = mutualInterests,
+                    mutualInterests = scored.mutualInterests,
+                    matchPercent = matchPercent,
                     friendStatus = uiState.friendStatusByUserId[member.userId] ?: FriendStatus.NONE,
                     isFollowing = uiState.followingIds.contains(member.userId),
                     isFavorited = uiState.favoriteIds.contains(member.userId),
@@ -312,6 +336,7 @@ private fun QuickFilterChip(
 private fun ProMemberDiscoveryCard(
     member: UserProfile,
     mutualInterests: List<String>,
+    matchPercent: Int = 0,
     friendStatus: FriendStatus,
     isFollowing: Boolean,
     isFavorited: Boolean,
@@ -386,7 +411,10 @@ private fun ProMemberDiscoveryCard(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         val titleText = if (member.hideAge) {
                             member.displayName
                         } else {
@@ -401,6 +429,21 @@ private fun ProMemberDiscoveryCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
+                        if (matchPercent > 0) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = BurgundyDark,
+                                border = BorderStroke(1.dp, OutlineGold.copy(alpha = 0.7f))
+                            ) {
+                                Text(
+                                    text = "💘 $matchPercent%",
+                                    color = GoldLight,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                     }
                     if (!member.username.isNullOrBlank()) {
                         Text(text = "@${member.username}", color = GoldLight, fontSize = 11.sp)

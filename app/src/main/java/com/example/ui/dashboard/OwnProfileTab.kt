@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -114,6 +115,7 @@ fun OwnProfileTab(
     onOpenBlockedUsers: () -> Unit,
     onOpenSafetyGuidelines: () -> Unit = {},
     onWatchRewardedAd: () -> Unit,
+    onBoostProfile: () -> Unit = {},
     onOpenOwnerAdmin: () -> Unit,
     onDeleteAccount: () -> Unit,
     onSignOut: () -> Unit,
@@ -153,7 +155,9 @@ fun OwnProfileTab(
     var hideAge by remember(profile?.hideAge) { mutableStateOf(profile?.hideAge ?: false) }
     var hideLocation by remember(profile?.hideLocation) { mutableStateOf(profile?.hideLocation ?: false) }
 
-    val membersById = remember(uiState.members) { uiState.members.associateBy { it.userId } }
+    val membersById = remember(uiState.knownUsersById, uiState.members) {
+        uiState.knownUsersById + uiState.members.associateBy { it.userId }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -528,14 +532,39 @@ fun OwnProfileTab(
                         Text("Blocked Users (${uiState.myBlockedUserIds.size})", color = TextWhite)
                     }
 
+                    Button(
+                        onClick = onBoostProfile,
+                        enabled = !uiState.isBoostingProfile,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("profile_boost_button"),
+                        colors = ButtonDefaults.buttonColors(containerColor = BurgundyPrimary)
+                    ) {
+                        Icon(imageVector = Icons.Default.RocketLaunch, contentDescription = null, tint = GoldLight)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (rewardCredits > 0) {
+                                "Boost My Profile (1 ⭐ • $rewardCredits Available)"
+                            } else {
+                                "Boost My Profile (Watch Ad for 1 ⭐)"
+                            },
+                            color = GoldLight,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
                     OutlinedButton(
                         onClick = onWatchRewardedAd,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("profile_watch_rewarded_ad_button"),
                         border = BorderStroke(1.dp, OutlineGold)
                     ) {
                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = GoldLight)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Watch Ad for Credits ($rewardCredits)", color = GoldLight)
+                        Text("Watch Ad (+1 ⭐) • Credits: $rewardCredits", color = GoldLight)
                     }
 
                     Row(

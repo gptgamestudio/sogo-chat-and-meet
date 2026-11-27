@@ -129,6 +129,8 @@ fun MainDashboardScreen(
     rewardCredits: Int = 0,
     onDismissAdStatus: () -> Unit = {},
     onWatchRewardedAd: () -> Unit = {},
+    onBoostProfile: () -> Unit = {},
+    onDirectoryClosed: () -> Unit = {},
     onOpenOwnerAdmin: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -151,8 +153,8 @@ fun MainDashboardScreen(
         BackHandler { activeBottomTab = SogoBottomTab.HOME }
     }
 
-    val membersById = remember(uiState.members) {
-        uiState.members.associateBy { it.userId }
+    val membersById = remember(uiState.knownUsersById, uiState.members) {
+        uiState.knownUsersById + uiState.members.associateBy { it.userId }
     }
 
     val dashboardPhotoPicker = rememberProfilePhotoPickerController { dataUri ->
@@ -311,7 +313,10 @@ fun MainDashboardScreen(
             onBlockMember = { member ->
                 pendingBlockMember = member
             },
-            onDismiss = { showAllMembersDirectory = false }
+            onDismiss = {
+                showAllMembersDirectory = false
+                onDirectoryClosed()
+            }
         )
     }
 
@@ -1045,7 +1050,8 @@ fun MainDashboardScreen(
                             onToggleFavorite = { viewModel.toggleFavorite(it) },
                             onToggleProfileLike = { viewModel.toggleProfileLike(it) },
                             onSayHi = { viewModel.sendSayHi(it) },
-                            onBlockMember = { pendingBlockMember = it }
+                            onBlockMember = { pendingBlockMember = it },
+                            onRefreshFeed = { viewModel.refreshDashboardFeed(force = true) }
                         )
                     }
 
@@ -1122,6 +1128,7 @@ fun MainDashboardScreen(
                             onOpenBlockedUsers = { showBlockedUsersDialog = true },
                             onOpenSafetyGuidelines = { showSafetyGuidelinesDialog = true },
                             onWatchRewardedAd = onWatchRewardedAd,
+                            onBoostProfile = onBoostProfile,
                             onOpenOwnerAdmin = onOpenOwnerAdmin,
                             onDeleteAccount = { showDeleteAccountDialog = true },
                             onSignOut = {
@@ -1153,7 +1160,11 @@ fun MainDashboardScreen(
                             onReactActivity = { postId, emoji ->
                                 viewModel.toggleActivityReaction(postId, emoji)
                             },
-                            onOpenSafetyGuidelines = { showSafetyGuidelinesDialog = true }
+                            onOpenSafetyGuidelines = { showSafetyGuidelinesDialog = true },
+                            rewardCredits = rewardCredits,
+                            onRefreshFeed = { viewModel.refreshDashboardFeed(force = true) },
+                            onBoostProfile = onBoostProfile,
+                            onWatchRewardedAd = onWatchRewardedAd
                         )
                     }
                 }

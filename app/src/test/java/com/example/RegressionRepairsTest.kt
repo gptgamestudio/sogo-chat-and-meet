@@ -111,6 +111,10 @@ class RegressionRepairsTest {
         val activityCommentsByPost = mutableMapOf<String, MutableStateFlow<List<ActivityComment>>>()
         var deletedAccountCallCount = 0
         var profilePreserved = true
+        var refreshMembersCallCount = 0
+        var loadMoreMembersCallCount = 0
+        var boostMyProfileCallCount = 0
+        var refreshActivityPostsCallCount = 0
 
         override fun getCurrentUserId(): String? = currentUid
         override fun requireUserId(): String = currentUid ?: throw IllegalStateException("Not signed in")
@@ -121,6 +125,23 @@ class RegressionRepairsTest {
             } ?: currentUserProfileFlow
 
         override fun observeMembers(): Flow<List<UserProfile>> = membersFlow
+
+        override suspend fun refreshMembers(force: Boolean) {
+            refreshMembersCallCount++
+        }
+
+        override suspend fun loadMoreMembers(): Boolean {
+            loadMoreMembersCallCount++
+            return false
+        }
+
+        override suspend fun boostMyProfile() {
+            boostMyProfileCallCount++
+        }
+
+        override suspend fun refreshActivityPosts(force: Boolean) {
+            refreshActivityPostsCallCount++
+        }
 
         override suspend fun saveUserProfile(profile: UserProfile) {
             saveProfileError?.let { throw it }
@@ -1330,5 +1351,40 @@ class RegressionRepairsTest {
         advanceUntilIdle()
         assertEquals(1, fake.sentMessages.size)
         assertNotNull(chatVm.uiState.value.errorMessage)
+    }
+
+    @Test
+    fun dashboardScaleUpgrades_refreshLoadMoreAndProfileBoostWorkCorrectly() = runTest {
+        val fake = FakeSogoDataSource(currentUid = "uid_me")
+        fake.currentUserProfileFlow.value = UserProfile(
+            userId = "uid_me",
+            displayName = "Alex",
+            age = 26,
+            country = "Philippines"
+        )
+        fake.membersFlow.value = List(15) { idx ->
+            UserProfile(userId = "uid_$idx", displayName = "Member $idx", age = 22 + idx)
+        }
+
+        val vm = MainDashboardViewModel(app, fake)
+        val collectJob = backgroundScope.launch { vm.uiState.collect() }
+        advanceUntilIdle()
+
+        vm.refreshDashboardFeed(force = true)
+        advanceUntilIdle()
+        assertEquals(1, fake.refreshMembersCallCount)
+        assertEquals(1, fake.refreshActivityPostsCallCount)
+
+        // INITIAL_MEMBERS_PAGE_SIZE = 20; 20 + 20 >= 15 triggers repository.loadMoreMembers()
+        vm.loadMoreMembers()
+        advanceUntilIdle()
+        assertEquals(1, fake.loadMoreMembersCallCount)
+
+        vm.boostProfile()
+        advanceUntilIdle()
+        assertEquals(1, fake.boostMyProfileCallCount)
+        assertTrue(vm.uiState.value.actionStatusMessage?.contains("boosted", ignoreCase = true) == true)
+
+        collectJob.cancel()
     }
 }

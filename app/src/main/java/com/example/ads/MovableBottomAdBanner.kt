@@ -36,8 +36,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,9 +64,13 @@ import com.example.ui.theme.GoldLight
 import com.example.ui.theme.MatteBlackSurface
 import com.example.ui.theme.MatteBlackSurfaceVariant
 import com.example.ui.theme.TextMuted
+import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.LoadAdError
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -234,6 +240,8 @@ fun MovableBottomAdBanner(
                     }
 
                     // Compact 320x50 AdMob Banner
+                    val bannerScope = rememberCoroutineScope()
+                    var bannerRetryCount by remember(bannerUnitId) { mutableIntStateOf(0) }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -254,6 +262,24 @@ fun MovableBottomAdBanner(
                                         )
                                         setAdSize(AdSize.BANNER)
                                         adUnitId = bannerUnitId
+                                        adListener = object : AdListener() {
+                                            override fun onAdLoaded() {
+                                                bannerRetryCount = 0
+                                            }
+
+                                            override fun onAdFailedToLoad(error: LoadAdError) {
+                                                if (bannerRetryCount < 2) {
+                                                    bannerRetryCount++
+                                                    val targetView = this@apply
+                                                    bannerScope.launch {
+                                                        delay(25_000L)
+                                                        runCatching {
+                                                            targetView.loadAd(AdRequest.Builder().build())
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                         loadAd(AdRequest.Builder().build())
                                     }.also { created ->
                                         adViewRef = created

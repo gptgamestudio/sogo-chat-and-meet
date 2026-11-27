@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.HowToReg
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Videocam
@@ -117,6 +119,10 @@ fun HomeTabContent(
     onDeclineFriendRequest: (String) -> Unit,
     onReactActivity: (String, String) -> Unit,
     onOpenSafetyGuidelines: () -> Unit = {},
+    rewardCredits: Int = 0,
+    onRefreshFeed: () -> Unit = {},
+    onBoostProfile: () -> Unit = {},
+    onWatchRewardedAd: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -134,7 +140,11 @@ fun HomeTabContent(
                 onlineNowCount = uiState.actualOnlineCount,
                 messagesCount = uiState.unreadMessagesCount,
                 likesCount = uiState.receivedLikesCount,
+                rewardCredits = rewardCredits,
+                isBoostingProfile = uiState.isBoostingProfile,
                 onEditProfile = onEditProfile,
+                onBoostProfile = onBoostProfile,
+                onWatchRewardedAd = onWatchRewardedAd,
                 onOpenFriends = onOpenMembersTab,
                 onOpenOnline = {
                     if (!uiState.filter.onlineOnly) onToggleOnlineOnly()
@@ -283,18 +293,39 @@ fun HomeTabContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Text(text = "💚 ", fontSize = 15.sp)
                         Text(
                             text = "ONLINE USERS YOU MAY LIKE",
                             color = OnlineGreen,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.9.sp
+                            letterSpacing = 0.8.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    TextButton(onClick = onOpenMembersTab) {
-                        Text("Discover All", color = GoldLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onRefreshFeed,
+                            enabled = !uiState.isRefreshingFeed,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("home_refresh_feed_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Refresh online feed",
+                                tint = if (uiState.isRefreshingFeed) TextDim else GoldAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        TextButton(onClick = onOpenMembersTab) {
+                            Text("Discover All", color = GoldLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
@@ -487,7 +518,11 @@ private fun HeroProfileHeaderCard(
     onlineNowCount: Int,
     messagesCount: Int,
     likesCount: Int,
+    rewardCredits: Int = 0,
+    isBoostingProfile: Boolean = false,
     onEditProfile: () -> Unit,
+    onBoostProfile: () -> Unit = {},
+    onWatchRewardedAd: () -> Unit = {},
     onOpenFriends: () -> Unit,
     onOpenOnline: () -> Unit,
     onOpenMessages: () -> Unit,
@@ -614,31 +649,61 @@ private fun HeroProfileHeaderCard(
                     border = BorderStroke(1.dp, OnlineGreen.copy(alpha = 0.55f))
                 ) {
                     Text(
-                        text = "● Online Now",
+                        text = "● Online",
                         color = OnlineGreen,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
                     )
                 }
 
-                OutlinedButton(
-                    onClick = onEditProfile,
-                    modifier = Modifier
-                        .heightIn(min = 42.dp)
-                        .testTag("hero_edit_profile_button"),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, GoldAccent),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Edit,
-                        contentDescription = "Edit Profile",
-                        tint = GoldLight,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Edit Profile", color = GoldLight, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = if (rewardCredits > 0) onBoostProfile else onWatchRewardedAd,
+                        enabled = !isBoostingProfile,
+                        modifier = Modifier
+                            .heightIn(min = 42.dp)
+                            .testTag("hero_boost_profile_button"),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BurgundyPrimary),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RocketLaunch,
+                            contentDescription = "Boost Profile",
+                            tint = GoldLight,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (rewardCredits > 0) "Boost ($rewardCredits ⭐)" else "+1 ⭐ Ad",
+                            color = GoldLight,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onEditProfile,
+                        modifier = Modifier
+                            .heightIn(min = 42.dp)
+                            .testTag("hero_edit_profile_button"),
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(1.dp, GoldAccent),
+                        contentPadding = PaddingValues(horizontal = 11.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit Profile",
+                            tint = GoldLight,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Edit", color = GoldLight, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
 

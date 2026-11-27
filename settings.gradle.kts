@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "SOGO CHAT AND MEET"
+rootProject.name = "Sogo Chat & Meet"
 
 include(":app")

@@ -386,13 +386,26 @@ fun TwoDestinationNavigator(
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    // Lifecycle-based Real-time Online Status (active only once profile exists)
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    val adMobManager = remember(context) {
+        (context.applicationContext as? SogoApplication)?.adMobManager
+    }
+    val adStatusMessage by (adMobManager?.adStatusMessage?.collectAsState()
+        ?: remember { mutableStateOf(null) })
+    val rewardCredits by (adMobManager?.rewardCredits?.collectAsState()
+        ?: remember { mutableStateOf(0) })
+
+    // Lifecycle-based Real-time Online Status + Ad preload on resume
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, currentUserId) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     dashboardViewModel.setPresence(true)
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    adMobManager?.ensureAdsLoaded()
                 }
                 Lifecycle.Event.ON_STOP -> {
                     dashboardViewModel.setPresence(false)
@@ -415,16 +428,6 @@ fun TwoDestinationNavigator(
             }
         }
     }
-
-    val context = LocalContext.current
-    val activity = remember(context) { context.findActivity() }
-    val adMobManager = remember(context) {
-        (context.applicationContext as? SogoApplication)?.adMobManager
-    }
-    val adStatusMessage by (adMobManager?.adStatusMessage?.collectAsState()
-        ?: remember { mutableStateOf(null) })
-    val rewardCredits by (adMobManager?.rewardCredits?.collectAsState()
-        ?: remember { mutableStateOf(0) })
 
     val dashboardState by dashboardViewModel.uiState.collectAsState()
     val callViewModel: CallViewModel = viewModel(key = "call_${currentUserId}_$sessionNonce")
@@ -573,6 +576,19 @@ fun TwoDestinationNavigator(
                 onDismissAdStatus = { adMobManager?.clearStatusMessage() },
                 onWatchRewardedAd = {
                     adMobManager?.showRewardedAd(activity)
+                },
+                onBoostProfile = {
+                    val manager = adMobManager
+                    if (manager != null && manager.spendRewardCredit(1)) {
+                        dashboardViewModel.boostProfile()
+                    } else if (manager != null) {
+                        manager.showRewardedAd(activity)
+                    } else {
+                        dashboardViewModel.boostProfile()
+                    }
+                },
+                onDirectoryClosed = {
+                    adMobManager?.showInterstitialIfEligible(activity) {}
                 },
                 onOpenOwnerAdmin = {
                     if (dashboardState.isOwnerCandidate) {

@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
@@ -9,8 +10,10 @@ import androidx.core.graphics.drawable.toDrawable
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.DataSource
+import coil.disk.DiskCache
 import coil.fetch.DrawableResult
 import coil.fetch.Fetcher
+import coil.memory.MemoryCache
 import coil.request.Options
 import com.example.ads.AdMobManager
 import com.google.firebase.FirebaseApp
@@ -24,6 +27,17 @@ class SogoApplication : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.15)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("sogo_image_cache"))
+                    .maxSizeBytes(32L * 1024L * 1024L)
+                    .build()
+            }
             .components {
                 add(DataUriFetcherFactory())
             }
@@ -79,11 +93,22 @@ class SogoApplication : Application(), ImageLoaderFactory {
                 } else {
                     payload.toByteArray()
                 }
-                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
+                var sampleSize = 1
+                while (maxSide > 512 && (maxSide / (sampleSize * 2)) >= 320) {
+                    sampleSize *= 2
+                }
+                val decodeOpts = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
                     ?: error("Unable to decode base64 profile image")
                 DrawableResult(
                     drawable = bitmap.toDrawable(options.context.resources),
-                    isSampled = false,
+                    isSampled = sampleSize > 1,
                     dataSource = DataSource.MEMORY
                 )
             }

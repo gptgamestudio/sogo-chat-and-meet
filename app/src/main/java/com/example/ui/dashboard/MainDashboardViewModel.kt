@@ -101,7 +101,10 @@ data class DashboardUiState(
     val isDeletingAccount: Boolean = false,
     val requiresReauthForDeletion: Boolean = false,
     val errorMessage: String? = null,
-    val isOwnerCandidate: Boolean = false
+    val isOwnerCandidate: Boolean = false,
+    val knownUsersById: Map<String, UserProfile> = emptyMap(),
+    val isRefreshingFeed: Boolean = false,
+    val isBoostingProfile: Boolean = false
 )
 
 private data class FilteredMembersSnapshot(
@@ -131,7 +134,16 @@ private data class SocialGraphSnapshot(
     val profileLikesGivenIds: Set<String>,
     val profileLikesReceived: List<ProfileLikeRecord>,
     val profileVisitors: List<ProfileVisitorRecord>,
-    val myGalleryPhotos: List<GalleryPhoto>
+    val myGalleryPhotos: List<GalleryPhoto>,
+    val extraPartnerProfiles: Map<String, UserProfile> = emptyMap()
+)
+
+private data class LoadingFlags(
+    val isLoading: Boolean,
+    val isPostingActivity: Boolean,
+    val isSavingProfile: Boolean,
+    val isRefreshingFeed: Boolean,
+    val isBoostingProfile: Boolean
 )
 
 private data class StatusFlags(
@@ -147,7 +159,9 @@ private data class StatusFlags(
     val isDeletingAccount: Boolean,
     val requiresReauthForDeletion: Boolean,
     val errorMessage: String?,
-    val isOwnerCandidate: Boolean
+    val isOwnerCandidate: Boolean,
+    val isRefreshingFeed: Boolean,
+    val isBoostingProfile: Boolean
 )
 
 private data class ActivityFeedSnapshot(
@@ -206,6 +220,9 @@ class MainDashboardViewModel(
     private val _requiresReauthForDeletion = MutableStateFlow(false)
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _isOwnerCandidate = MutableStateFlow(repository.isOwnerCandidateSignedIn())
+    private val _extraPartnerProfiles = MutableStateFlow<Map<String, UserProfile>>(emptyMap())
+    private val _isRefreshingFeed = MutableStateFlow(false)
+    private val _isBoostingProfile = MutableStateFlow(false)
 
     private val _blockedPairIds = combine(_blockedUserIds, _myBlockedUserIds) { allBlocked, myBlocked ->
         allBlocked to myBlocked
@@ -365,14 +382,24 @@ class MainDashboardViewModel(
         listOf(following, favorites, likesGiven, likesReceived, visitors)
     }
 
-    @Suppress("UNCHECKED_CAST")
-    private val _socialGraphSnapshot = combine(
+    private val _inboxSocialFlow = combine(
         _rawConversations,
         _rawNotifications,
+        _extraPartnerProfiles
+    ) { conversations, notifications, extraPartners ->
+        Triple(conversations, notifications, extraPartners)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private val _socialGraphSnapshot = combine(
+        _inboxSocialFlow,
         _blockedUserIds,
         _myGalleryPhotos,
         _socialConnectionsFlow
-    ) { conversations, notifications, blocked, gallery, connections ->
+    ) { inboxTriple, blocked, gallery, connections ->
+        val conversations = inboxTriple.first
+        val notifications = inboxTriple.second
+        val extraPartners = inboxTriple.third
         val uid = repository.getCurrentUserId()
         val unblockedConversations = conversations
             .filter { conv ->
@@ -407,16 +434,25 @@ class MainDashboardViewModel(
             profileLikesGivenIds = connections[2] as Set<String>,
             profileLikesReceived = likesReceived,
             profileVisitors = visitors,
-            myGalleryPhotos = gallery
+            myGalleryPhotos = gallery,
+            extraPartnerProfiles = extraPartners
         )
     }
 
     private val _loadingFlags = combine(
         _isLoading,
         _isPostingActivity,
-        _isSavingProfile
-    ) { isLoading, isPostingActivity, isSavingProfile ->
-        Triple(isLoading, isPostingActivity, isSavingProfile)
+        _isSavingProfile,
+        _isRefreshingFeed,
+        _isBoostingProfile
+    ) { isLoading, isPostingActivity, isSavingProfile, isRefreshingFeed, isBoostingProfile ->
+        LoadingFlags(
+            isLoading = isLoading,
+            isPostingActivity = isPostingActivity,
+            isSavingProfile = isSavingProfile,
+            isRefreshingFeed = isRefreshingFeed,
+            isBoostingProfile = isBoostingProfile
+        )
     }
 
     private val _profileLoadFlags = combine(
@@ -451,11 +487,11 @@ class MainDashboardViewModel(
         _photoFlags
     ) { loading, profileLoad, account, photo ->
         StatusFlags(
-            isLoading = loading.first,
+            isLoading = loading.isLoading,
             hasResolvedProfile = profileLoad.first,
             profileLoadError = profileLoad.second,
-            isPostingActivity = loading.second,
-            isSavingProfile = loading.third,
+            isPostingActivity = loading.isPostingActivity,
+            isSavingProfile = loading.isSavingProfile,
             isUpdatingPhoto = photo[0] as Boolean,
             photoStatusMessage = photo[1] as String?,
             blockStatusMessage = photo[2] as String?,
@@ -463,7 +499,9 @@ class MainDashboardViewModel(
             isDeletingAccount = account[0] as Boolean,
             requiresReauthForDeletion = account[1] as Boolean,
             errorMessage = account[2] as String?,
-            isOwnerCandidate = account[3] as Boolean
+            isOwnerCandidate = account[3] as Boolean,
+            isRefreshingFeed = loading.isRefreshingFeed,
+            isBoostingProfile = loading.isBoostingProfile
         )
     }
 
@@ -563,7 +601,10 @@ class MainDashboardViewModel(
             isDeletingAccount = status.isDeletingAccount,
             requiresReauthForDeletion = status.requiresReauthForDeletion,
             errorMessage = status.errorMessage,
-            isOwnerCandidate = status.isOwnerCandidate
+            isOwnerCandidate = status.isOwnerCandidate,
+            knownUsersById = social.extraPartnerProfiles + membersData.members.associateBy { it.userId },
+            isRefreshingFeed = status.isRefreshingFeed,
+            isBoostingProfile = status.isBoostingProfile
         )
     }.stateIn(
         scope = viewModelScope,
@@ -740,6 +781,22 @@ class MainDashboardViewModel(
             try {
                 repository.observeConversations().collect { list ->
                     _rawConversations.value = list
+                    val knownIds = _rawMembers.value.map { it.userId }.toSet() + _extraPartnerProfiles.value.keys
+                    val missingPartnerIds = list.mapNotNull { conv ->
+                        conv.participantUids.firstOrNull { it != uid }
+                    }.distinct().filter { it.isNotBlank() && !knownIds.contains(it) }
+                    if (missingPartnerIds.isNotEmpty()) {
+                        launch {
+                            try {
+                                val fetched = repository.fetchUsersByIds(missingPartnerIds.take(30))
+                                if (fetched.isNotEmpty()) {
+                                    _extraPartnerProfiles.value = _extraPartnerProfiles.value + fetched.associateBy { it.userId }
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {}
+                        }
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -894,7 +951,54 @@ class MainDashboardViewModel(
     }
 
     fun loadMoreMembers() {
-        _discoveryPageLimit.value += MEMBERS_PAGE_STEP
+        val nextLimit = _discoveryPageLimit.value + MEMBERS_PAGE_STEP
+        _discoveryPageLimit.value = nextLimit
+        if (nextLimit >= _rawMembers.value.size) {
+            viewModelScope.launch {
+                try {
+                    repository.loadMoreMembers()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    fun refreshDashboardFeed(force: Boolean = true) {
+        if (_isRefreshingFeed.value) return
+        viewModelScope.launch {
+            _isRefreshingFeed.value = true
+            try {
+                repository.refreshMembers(force = force)
+                repository.refreshActivityPosts(force = force)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Could not refresh feed right now."
+            } finally {
+                _isRefreshingFeed.value = false
+            }
+        }
+    }
+
+    fun boostProfile(onSuccess: () -> Unit = {}) {
+        if (_isBoostingProfile.value) return
+        viewModelScope.launch {
+            _isBoostingProfile.value = true
+            _errorMessage.value = null
+            try {
+                repository.boostMyProfile()
+                _actionStatusMessage.value = "🚀 Profile boosted! You're bumped near the top of Discover."
+                onSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _errorMessage.value = e.message ?: "Could not boost your profile right now."
+            } finally {
+                _isBoostingProfile.value = false
+            }
+        }
     }
 
     fun setActivityCategoryFilter(category: String) {
