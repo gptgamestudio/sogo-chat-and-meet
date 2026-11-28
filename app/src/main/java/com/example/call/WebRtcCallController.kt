@@ -50,10 +50,12 @@ import kotlin.coroutines.resumeWithException
 
 enum class CallPhase {
     IDLE,
+    CALLING,
     RINGING_OUTGOING,
     RINGING_INCOMING,
     CONNECTING,
-    CONNECTED
+    CONNECTED,
+    ENDED
 }
 
 data class ActiveCallUiState(
@@ -97,6 +99,7 @@ class CallViewModel(
     private var iceObserverJob: Job? = null
     private var iceReconnectJob: Job? = null
     private var timerJob: Job? = null
+    private var endedResetJob: Job? = null
 
     private val processedCandidateIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val pendingRemoteCandidates = Collections.synchronizedList(mutableListOf<IceCandidate>())
@@ -173,12 +176,16 @@ class CallViewModel(
         if (currentCallId != null) {
             val match = sessions.firstOrNull { it.callId == currentCallId }
             if (match == null || match.status == "ENDED" || match.status == "DECLINED") {
-                val endNotice = if (match?.status == "DECLINED") {
+                val declined = match?.status == "DECLINED"
+                val endNotice = if (declined) {
                     "Call was declined."
                 } else {
                     null
                 }
-                teardownWebRtcAndReset(errorNotice = endNotice)
+                teardownWebRtcAndShowEnded(
+                    statusText = if (declined) "Call Declined" else "Call Ended",
+                    errorNotice = endNotice
+                )
                 return
             }
 
@@ -247,7 +254,9 @@ class CallViewModel(
             _uiState.update { it.copy(errorMessage = "Calls are restricted with a blocked user.") }
             return
         }
-        if (_uiState.value.phase != CallPhase.IDLE) return
+        if (_uiState.value.phase != CallPhase.IDLE && _uiState.value.phase != CallPhase.ENDED) return
+        endedResetJob?.cancel()
+        endedResetJob = null
 
         val normalizedType = if (callType == "AUDIO") "AUDIO" else "VIDEO"
         val callerName = callerProfile?.displayName?.takeIf { it.isNotBlank() } ?: "SOGO Member"
@@ -261,7 +270,7 @@ class CallViewModel(
         pendingRemoteCandidates.clear()
 
         _uiState.value = ActiveCallUiState(
-            phase = CallPhase.RINGING_OUTGOING,
+            phase = CallPhase.CALLING,
             callType = normalizedType,
             peerName = callee.displayName,
             peerPhotoUrl = callee.photoUrl,
@@ -269,7 +278,7 @@ class CallViewModel(
             isMuted = false,
             isSpeakerOn = normalizedType == "VIDEO",
             isVideoEnabled = normalizedType == "VIDEO",
-            statusLabel = "Calling ${callee.displayName} (Free)..."
+            statusLabel = "Calling ${callee.displayName}..."
         )
 
         viewModelScope.launch {
@@ -292,7 +301,7 @@ class CallViewModel(
                 }
 
                 // User may have cancelled while offer/doc creation was in flight
-                if (_uiState.value.phase == CallPhase.IDLE) {
+                if (_uiState.value.phase == CallPhase.IDLE || _uiState.value.phase == CallPhase.ENDED) {
                     withContext(Dispatchers.IO) {
                         runCatching { repository.updateCallStatus(createdCallId, "ENDED") }
                     }
@@ -303,6 +312,7 @@ class CallViewModel(
                 startObservingRemoteCandidates(createdCallId)
                 _uiState.update {
                     it.copy(
+                        phase = CallPhase.RINGING_OUTGOING,
                         statusLabel = "Ringing ${callee.displayName}..."
                     )
                 }
@@ -360,7 +370,7 @@ class CallViewModel(
                 _uiState.update {
                     it.copy(
                         phase = CallPhase.CONNECTED,
-                        statusLabel = "Live • Free P2P Call"
+                        statusLabel = "Connected • Free P2P Call"
                     )
                 }
             } catch (e: CancellationException) {
@@ -394,7 +404,13 @@ class CallViewModel(
                 runCatching { repository.updateCallStatus(callId, "ENDED") }
             }
         }
-        teardownWebRtcAndReset()
+        teardownWebRtcAndShowEnded(statusText = "Call Ended")
+    }
+
+    fun dismissEndedCall() {
+        endedResetJob?.cancel()
+        endedResetJob = null
+        _uiState.value = ActiveCallUiState(phase = CallPhase.IDLE)
     }
 
     fun toggleMute() {
@@ -453,7 +469,7 @@ class CallViewModel(
                 _uiState.update {
                     it.copy(
                         phase = CallPhase.CONNECTED,
-                        statusLabel = "Live • Free P2P Call"
+                        statusLabel = "Connected • Free P2P Call"
                     )
                 }
             } catch (e: CancellationException) {
@@ -562,8 +578,8 @@ class CallViewModel(
                     viewModelScope.launch {
                         startCallTimerIfNeeded()
                         _uiState.update {
-                            if (it.phase != CallPhase.IDLE) {
-                                it.copy(phase = CallPhase.CONNECTED, statusLabel = "Live • Free P2P Call")
+                            if (it.phase != CallPhase.IDLE && it.phase != CallPhase.ENDED) {
+                                it.copy(phase = CallPhase.CONNECTED, statusLabel = "Connected • Free P2P Call")
                             } else it
                         }
                     }
@@ -579,9 +595,12 @@ class CallViewModel(
                         iceReconnectJob = viewModelScope.launch {
                             delay(ICE_RECONNECT_TIMEOUT_MS)
                             val callId = activeCallId
-                            if (callId != null && _uiState.value.phase != CallPhase.IDLE) {
+                            if (callId != null && _uiState.value.phase != CallPhase.IDLE && _uiState.value.phase != CallPhase.ENDED) {
                                 runCatching { repository.updateCallStatus(callId, "ENDED") }
-                                teardownWebRtcAndReset("Call ended: peer network unreachable (strict NAT/Wi-Fi). Please try again.")
+                                teardownWebRtcAndShowEnded(
+                                    statusText = "Call Ended",
+                                    errorNotice = "Call ended: peer network unreachable (strict NAT/Wi-Fi). Please try again."
+                                )
                             }
                         }
                     }
@@ -788,7 +807,7 @@ class CallViewModel(
             }, sdp)
         }
 
-    private fun teardownWebRtcAndReset(errorNotice: String? = null) {
+    private fun releaseWebRtcResources() {
         iceObserverJob?.cancel()
         iceObserverJob = null
         iceReconnectJob?.cancel()
@@ -833,6 +852,39 @@ class CallViewModel(
         eglBase = null
 
         restoreAudioState()
+    }
+
+    private fun teardownWebRtcAndShowEnded(
+        statusText: String = "Call Ended",
+        errorNotice: String? = null
+    ) {
+        val prevState = _uiState.value
+        releaseWebRtcResources()
+        endedResetJob?.cancel()
+
+        _uiState.value = ActiveCallUiState(
+            phase = CallPhase.ENDED,
+            callType = prevState.callType,
+            peerName = prevState.peerName,
+            peerPhotoUrl = prevState.peerPhotoUrl,
+            isIncoming = prevState.isIncoming,
+            durationSeconds = prevState.durationSeconds,
+            statusLabel = statusText,
+            errorMessage = errorNotice
+        )
+
+        endedResetJob = viewModelScope.launch {
+            delay(ENDED_BANNER_DURATION_MS)
+            if (_uiState.value.phase == CallPhase.ENDED) {
+                _uiState.value = ActiveCallUiState(phase = CallPhase.IDLE)
+            }
+        }
+    }
+
+    private fun teardownWebRtcAndReset(errorNotice: String? = null) {
+        endedResetJob?.cancel()
+        endedResetJob = null
+        releaseWebRtcResources()
 
         _uiState.value = ActiveCallUiState(
             phase = CallPhase.IDLE,
@@ -857,5 +909,6 @@ class CallViewModel(
         private const val TAG = "SogoWebRtcCall"
         private const val MAX_RING_AGE_MS = 5 * 60 * 1000L
         private const val ICE_RECONNECT_TIMEOUT_MS = 18_000L
+        private const val ENDED_BANNER_DURATION_MS = 1_600L
     }
 }

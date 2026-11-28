@@ -182,6 +182,23 @@ private val INTEREST_OPTIONS = listOf(
     "Cooking & Baking"
 )
 
+private val RELATIONSHIP_STATUS_OPTIONS = listOf(
+    "Single",
+    "Open to Dating",
+    "It's Complicated",
+    "Divorced",
+    "Widowed",
+    "Prefer not to say"
+)
+
+private val LOOKING_FOR_OPTIONS = listOf(
+    "Serious Dating & Relationship",
+    "Friendship & Chat",
+    "Casual Dating",
+    "Long-Term Partner",
+    "Networking & Community"
+)
+
 private val AVATAR_PRESETS = listOf(
     "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80",
     "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=600&q=80",
@@ -214,7 +231,21 @@ fun MemberProfileSetupScreen(
         aboutMe: String,
         personality: String,
         interests: List<String>
-    ) -> Unit,
+    ) -> Unit = { _, _, _, _, _, _, _, _, _, _ -> },
+    onSaveFullProfile: ((
+        displayName: String,
+        birthday: String,
+        age: Int,
+        gender: String,
+        country: String,
+        city: String,
+        photoUrl: String?,
+        aboutMe: String,
+        personality: String,
+        interests: List<String>,
+        relationshipStatus: String?,
+        lookingFor: String?
+    ) -> Unit)? = null,
     onSignOut: () -> Unit = {},
     onClose: (() -> Unit)? = null
 ) {
@@ -228,6 +259,12 @@ fun MemberProfileSetupScreen(
         )
     }
     var gender by remember(initialProfile?.userId) { mutableStateOf((initialProfile?.gender ?: "Female").take(30)) }
+    var relationshipStatus by remember(initialProfile?.userId) {
+        mutableStateOf((initialProfile?.relationshipStatus ?: "Single").take(40))
+    }
+    var lookingFor by remember(initialProfile?.userId) {
+        mutableStateOf((initialProfile?.lookingFor ?: LOOKING_FOR_OPTIONS[0]).take(60))
+    }
     var country by remember(initialProfile?.userId) { mutableStateOf((initialProfile?.country ?: "Philippines").take(60)) }
     var city by remember(initialProfile?.userId) { mutableStateOf((initialProfile?.city ?: "Makati").take(60)) }
     var aboutMe by remember(initialProfile?.userId) { mutableStateOf(initialProfile?.aboutMe ?: "") }
@@ -752,6 +789,79 @@ fun MemberProfileSetupScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Relationship Status Selection
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Relationship Status",
+                    color = PhilippineGold,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    RELATIONSHIP_STATUS_OPTIONS.forEach { status ->
+                        val isSelected = relationshipStatus == status
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { relationshipStatus = status },
+                            label = { Text(status, fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = BurgundyDark,
+                                selectedLabelColor = PhilippineGold,
+                                containerColor = MatteBlackSurface,
+                                labelColor = OffWhiteText
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isSelected,
+                                borderColor = if (isSelected) PhilippineGold else Color.DarkGray
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Looking For Selection
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Looking For",
+                    color = PhilippineGold,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    LOOKING_FOR_OPTIONS.forEach { goal ->
+                        val isSelected = lookingFor == goal
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { lookingFor = goal },
+                            label = { Text(goal, fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = PhilippineGold,
+                                selectedLabelColor = Color.Black,
+                                containerColor = MatteBlackSurface,
+                                labelColor = OffWhiteText
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(20.dp))
 
             // Location: Country & City (No GPS)
@@ -1005,18 +1115,37 @@ fun MemberProfileSetupScreen(
                         else -> {
                             localErrorMessage = null
                             onDismissError()
-                            onSaveProfile(
-                                displayName,
-                                birthdayString,
-                                safeAge,
-                                gender,
-                                country,
-                                city,
-                                photoUrl,
-                                aboutMe,
-                                selectedPersonality,
-                                selectedInterests
-                            )
+                            val cleanRelationship = relationshipStatus.trim().takeIf { it.isNotBlank() }?.take(40)
+                            val cleanLookingFor = lookingFor.trim().takeIf { it.isNotBlank() }?.take(60)
+                            if (onSaveFullProfile != null) {
+                                onSaveFullProfile(
+                                    displayName,
+                                    birthdayString,
+                                    safeAge,
+                                    gender,
+                                    country,
+                                    city,
+                                    photoUrl,
+                                    aboutMe,
+                                    selectedPersonality,
+                                    selectedInterests,
+                                    cleanRelationship,
+                                    cleanLookingFor
+                                )
+                            } else {
+                                onSaveProfile(
+                                    displayName,
+                                    birthdayString,
+                                    safeAge,
+                                    gender,
+                                    country,
+                                    city,
+                                    photoUrl,
+                                    aboutMe,
+                                    selectedPersonality,
+                                    selectedInterests
+                                )
+                            }
                         }
                     }
                 },

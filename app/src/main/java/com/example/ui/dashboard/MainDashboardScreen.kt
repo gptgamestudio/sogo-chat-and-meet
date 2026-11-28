@@ -78,6 +78,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.example.ui.common.CountryFlagHelper
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -340,7 +341,7 @@ fun MainDashboardScreen(
                 },
                 externalErrorMessage = uiState.errorMessage,
                 onDismissError = { viewModel.clearError() },
-                onSaveProfile = { name, bday, age, gen, country, city, photo, about, personality, interests ->
+                onSaveFullProfile = { name, bday, age, gen, country, city, photo, about, personality, interests, relationshipStatus, lookingFor ->
                     viewModel.createOrUpdateProfile(
                         displayName = name,
                         birthday = bday,
@@ -352,6 +353,8 @@ fun MainDashboardScreen(
                         aboutMe = about,
                         personality = personality,
                         interests = interests,
+                        lookingFor = lookingFor,
+                        relationshipStatus = relationshipStatus,
                         onSuccess = {
                             showEditProfileDialog = false
                         }
@@ -1124,6 +1127,22 @@ fun MainDashboardScreen(
                                     hideLocation = hideLoc
                                 )
                             },
+                            onSavePreferencesWithRelationship = { username, hobbies, lookingFor, relationshipStatus, prefGender, minAge, maxAge, prefCountry, hideDisc, hideOnline, hideAge, hideLoc ->
+                                viewModel.updateDatingPreferencesAndPrivacy(
+                                    username = username,
+                                    hobbies = hobbies,
+                                    lookingFor = lookingFor,
+                                    preferredGender = prefGender,
+                                    preferredMinAge = minAge,
+                                    preferredMaxAge = maxAge,
+                                    preferredCountry = prefCountry,
+                                    hideFromDiscovery = hideDisc,
+                                    hideOnlineStatus = hideOnline,
+                                    hideAge = hideAge,
+                                    hideLocation = hideLoc,
+                                    relationshipStatus = relationshipStatus
+                                )
+                            },
                             onSelectMember = onSelectMember,
                             onOpenBlockedUsers = { showBlockedUsersDialog = true },
                             onOpenSafetyGuidelines = { showSafetyGuidelinesDialog = true },
@@ -1461,7 +1480,11 @@ fun AllMembersDirectoryDialog(
                                             )
                                         }
                                         Text(
-                                            text = "${member.city ?: "Manila"}, ${member.country}",
+                                            text = if (member.hideLocation) {
+                                                "Location hidden"
+                                            } else {
+                                                CountryFlagHelper.formatCountryWithFlag(member.country, member.city)
+                                            },
                                             color = TextMuted,
                                             fontSize = 11.sp,
                                             maxLines = 1,

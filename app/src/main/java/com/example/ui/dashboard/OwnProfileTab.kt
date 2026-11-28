@@ -119,6 +119,20 @@ fun OwnProfileTab(
     onOpenOwnerAdmin: () -> Unit,
     onDeleteAccount: () -> Unit,
     onSignOut: () -> Unit,
+    onSavePreferencesWithRelationship: ((
+        username: String?,
+        hobbies: List<String>,
+        lookingFor: String?,
+        relationshipStatus: String?,
+        preferredGender: String,
+        preferredMinAge: Int,
+        preferredMaxAge: Int,
+        preferredCountry: String,
+        hideFromDiscovery: Boolean,
+        hideOnlineStatus: Boolean,
+        hideAge: Boolean,
+        hideLocation: Boolean
+    ) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val profile = uiState.currentUserProfile
@@ -146,6 +160,7 @@ fun OwnProfileTab(
 
     var usernameInput by remember(profile?.username) { mutableStateOf(profile?.username ?: "") }
     var lookingForInput by remember(profile?.lookingFor) { mutableStateOf(profile?.lookingFor ?: "Serious Dating & Friendship") }
+    var relationshipStatusInput by remember(profile?.relationshipStatus) { mutableStateOf(profile?.relationshipStatus ?: "Single") }
     var preferredGender by remember(profile?.preferredGender) { mutableStateOf(profile?.preferredGender ?: "ALL") }
     var preferredCountry by remember(profile?.preferredCountry) { mutableStateOf(profile?.preferredCountry ?: "ALL") }
     var preferredMinAgeText by remember(profile?.preferredMinAge) { mutableStateOf((profile?.preferredMinAge ?: 18).toString()) }
@@ -408,6 +423,25 @@ fun OwnProfileTab(
                         colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, focusedBorderColor = GoldAccent, unfocusedBorderColor = OutlineSubtle)
                     )
 
+                    Text("Relationship Status:", color = TextMuted, fontSize = 11.sp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(
+                            "Single",
+                            "Open to Dating",
+                            "It's Complicated",
+                            "Divorced",
+                            "Widowed",
+                            "Prefer not to say"
+                        ).forEach { status ->
+                            FilterChip(
+                                selected = relationshipStatusInput == status,
+                                onClick = { relationshipStatusInput = status },
+                                label = { Text(status, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = BurgundyPrimary, selectedLabelColor = GoldLight)
+                            )
+                        }
+                    }
+
                     Text("Preferred Match Gender:", color = TextMuted, fontSize = 11.sp)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("ALL", "Female", "Male", "Non-Binary").forEach { g ->
@@ -461,19 +495,38 @@ fun OwnProfileTab(
                         onClick = {
                             val minA = (preferredMinAgeText.toIntOrNull() ?: 18).coerceIn(18, 100)
                             val maxA = (preferredMaxAgeText.toIntOrNull() ?: 80).coerceIn(minA, 120)
-                            onSaveDatingPreferences(
-                                usernameInput.trim().takeIf { it.isNotBlank() },
-                                profile?.hobbies ?: emptyList(),
-                                lookingForInput.trim().takeIf { it.isNotBlank() },
-                                preferredGender,
-                                minA,
-                                maxA,
-                                preferredCountry,
-                                hideFromDiscovery,
-                                hideOnlineStatus,
-                                hideAge,
-                                hideLocation
-                            )
+                            val cleanRelStatus = relationshipStatusInput.trim().takeIf { it.isNotBlank() }?.take(40)
+                            val prefWithRel = onSavePreferencesWithRelationship
+                            if (prefWithRel != null) {
+                                prefWithRel(
+                                    usernameInput.trim().takeIf { it.isNotBlank() },
+                                    profile?.hobbies ?: emptyList(),
+                                    lookingForInput.trim().takeIf { it.isNotBlank() },
+                                    cleanRelStatus,
+                                    preferredGender,
+                                    minA,
+                                    maxA,
+                                    preferredCountry,
+                                    hideFromDiscovery,
+                                    hideOnlineStatus,
+                                    hideAge,
+                                    hideLocation
+                                )
+                            } else {
+                                onSaveDatingPreferences(
+                                    usernameInput.trim().takeIf { it.isNotBlank() },
+                                    profile?.hobbies ?: emptyList(),
+                                    lookingForInput.trim().takeIf { it.isNotBlank() },
+                                    preferredGender,
+                                    minA,
+                                    maxA,
+                                    preferredCountry,
+                                    hideFromDiscovery,
+                                    hideOnlineStatus,
+                                    hideAge,
+                                    hideLocation
+                                )
+                            }
                         },
                         enabled = !uiState.isSavingProfile,
                         modifier = Modifier

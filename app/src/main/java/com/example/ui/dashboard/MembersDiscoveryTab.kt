@@ -73,6 +73,7 @@ import coil.request.ImageRequest
 import com.example.data.matching.MatchRecommender
 import com.example.data.model.FriendStatus
 import com.example.data.model.UserProfile
+import com.example.ui.common.CountryFlagHelper
 import com.example.ui.common.MemberPresenceFormatter
 import com.example.ui.common.MemberPresenceStatusRow
 import com.example.ui.theme.BurgundyDark
@@ -458,7 +459,7 @@ private fun ProMemberDiscoveryCard(
                             )
                             Spacer(modifier = Modifier.width(3.dp))
                             Text(
-                                text = "${member.city ?: ""}, ${member.country}".trim(',', ' '),
+                                text = CountryFlagHelper.formatCountryWithFlag(member.country, member.city),
                                 color = TextMuted,
                                 fontSize = 11.sp,
                                 maxLines = 1,
@@ -624,7 +625,7 @@ private fun ProMemberDiscoveryCard(
             // Primary Connect Row (preserves existing testTags)
             val (friendLabel, friendIcon) = when (friendStatus) {
                 FriendStatus.NONE -> "Add Friend" to Icons.Default.PersonAdd
-                FriendStatus.REQUEST_SENT -> "Sent" to Icons.Default.HourglassTop
+                FriendStatus.REQUEST_SENT -> "Pending" to Icons.Default.HourglassTop
                 FriendStatus.REQUEST_RECEIVED -> "Accept" to Icons.Default.Check
                 FriendStatus.FRIENDS -> "Friends" to Icons.Default.HowToReg
             }

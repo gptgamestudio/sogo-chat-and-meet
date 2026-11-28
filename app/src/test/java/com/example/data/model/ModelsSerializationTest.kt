@@ -63,6 +63,32 @@ class ModelsSerializationTest {
     }
 
     @Test
+    fun userProfile_relationshipStatus_serializesAndSupportsLegacyOmission() {
+        val withStatus = CustomClassMapper.convertToCustomClass(
+            mapOf(
+                "userId" to "uid_rel",
+                "displayName" to "Carla",
+                "age" to 27,
+                "relationshipStatus" to "Open to Dating"
+            ),
+            UserProfile::class.java,
+            docRef("users/uid_rel")
+        )
+        assertEquals("Open to Dating", withStatus.relationshipStatus)
+
+        val legacyWithoutStatus = CustomClassMapper.convertToCustomClass(
+            mapOf(
+                "userId" to "uid_legacy",
+                "displayName" to "Ana",
+                "age" to 25
+            ),
+            UserProfile::class.java,
+            docRef("users/uid_legacy")
+        )
+        assertEquals(null, legacyWithoutStatus.relationshipStatus)
+    }
+
+    @Test
     fun userPresence_isOnline_serializesAndDeserializesWithExactIsOnlineKey() {
         val raw = mapOf(
             "userId" to "uid_123",

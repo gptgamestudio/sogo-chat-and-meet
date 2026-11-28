@@ -1337,6 +1337,7 @@ class MainDashboardViewModel(
         hideOnlineStatus: Boolean,
         hideAge: Boolean,
         hideLocation: Boolean,
+        relationshipStatus: String? = _currentUserProfile.value?.relationshipStatus,
         onSuccess: () -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -1353,12 +1354,14 @@ class MainDashboardViewModel(
                     hideFromDiscovery = hideFromDiscovery,
                     hideOnlineStatus = hideOnlineStatus,
                     hideAge = hideAge,
-                    hideLocation = hideLocation
+                    hideLocation = hideLocation,
+                    relationshipStatus = relationshipStatus
                 )
                 _currentUserProfile.value = _currentUserProfile.value?.copy(
                     username = username,
                     hobbies = hobbies,
                     lookingFor = lookingFor,
+                    relationshipStatus = relationshipStatus ?: _currentUserProfile.value?.relationshipStatus,
                     preferredGender = preferredGender,
                     preferredMinAge = preferredMinAge,
                     preferredMaxAge = preferredMaxAge,
@@ -1381,6 +1384,20 @@ class MainDashboardViewModel(
     }
 
     fun sendFriendRequest(targetUid: String) {
+        val currentUid = repository.getCurrentUserId()
+        if (currentUid == null || targetUid.isBlank() || targetUid == currentUid) return
+        val existingRequest = _friendRequests.value.firstOrNull { req ->
+            req.participantUids.containsAll(listOf(currentUid, targetUid))
+        }
+        if (existingRequest != null) {
+            if (existingRequest.status == "PENDING" && existingRequest.requesterId == currentUid) {
+                // Already pending from current user; ignore duplicate send
+                return
+            }
+            if (existingRequest.status == "ACCEPTED") {
+                return
+            }
+        }
         viewModelScope.launch {
             try {
                 repository.sendFriendRequest(targetUid)
@@ -1481,6 +1498,7 @@ class MainDashboardViewModel(
         username: String? = _currentUserProfile.value?.username,
         hobbies: List<String> = _currentUserProfile.value?.hobbies ?: emptyList(),
         lookingFor: String? = _currentUserProfile.value?.lookingFor,
+        relationshipStatus: String? = _currentUserProfile.value?.relationshipStatus,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
@@ -1520,6 +1538,7 @@ class MainDashboardViewModel(
                     hobbies = hobbies.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(25),
                     interests = interests.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(25),
                     lookingFor = lookingFor?.trim()?.takeIf { it.isNotBlank() }?.take(60),
+                    relationshipStatus = relationshipStatus?.trim()?.takeIf { it.isNotBlank() }?.take(40),
                     isOnline = true,
                     role = "member"
                 )

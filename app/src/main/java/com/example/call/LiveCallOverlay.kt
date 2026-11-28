@@ -33,6 +33,8 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
@@ -81,7 +83,8 @@ fun LiveCallOverlay(
     onToggleMute: () -> Unit,
     onToggleSpeaker: () -> Unit,
     onToggleVideo: () -> Unit,
-    onSwitchCamera: () -> Unit
+    onSwitchCamera: () -> Unit,
+    onDismissEnded: () -> Unit = {}
 ) {
     if (callState.phase == CallPhase.IDLE) return
 
@@ -142,7 +145,8 @@ fun LiveCallOverlay(
                 callState.isVideoEnabled &&
                 callState.eglContext != null &&
                 callState.localVideoTrack != null &&
-                callState.phase != CallPhase.RINGING_INCOMING
+                callState.phase != CallPhase.RINGING_INCOMING &&
+                callState.phase != CallPhase.ENDED
             ) {
                 Surface(
                     modifier = Modifier
@@ -175,20 +179,33 @@ fun LiveCallOverlay(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Header with FREE badge & peer status
+                // Header with live Call State badge & peer status
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val phaseLabel = when (callState.phase) {
+                        CallPhase.CALLING -> if (callState.callType == "VIDEO") "CALLING • VIDEO" else "CALLING • VOICE"
+                        CallPhase.RINGING_OUTGOING -> "RINGING..."
+                        CallPhase.RINGING_INCOMING -> if (callState.callType == "VIDEO") "INCOMING VIDEO CALL" else "INCOMING VOICE CALL"
+                        CallPhase.CONNECTING -> "CONNECTING..."
+                        CallPhase.CONNECTED -> "CONNECTED • LIVE"
+                        CallPhase.ENDED -> "CALL ENDED"
+                        CallPhase.IDLE -> ""
+                    }
+                    val phaseTint = when (callState.phase) {
+                        CallPhase.ENDED -> AlertRed
+                        CallPhase.CALLING,
+                        CallPhase.RINGING_OUTGOING,
+                        CallPhase.CONNECTING -> GoldLight
+                        else -> OnlineGreen
+                    }
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = OnlineGreen.copy(alpha = 0.16f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, OnlineGreen.copy(alpha = 0.7f))
+                        color = phaseTint.copy(alpha = 0.16f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, phaseTint.copy(alpha = 0.75f)),
+                        modifier = Modifier.testTag("call_phase_badge")
                     ) {
                         Text(
-                            text = if (callState.callType == "VIDEO") {
-                                "FREE VIDEO CALL • OPEN TO ALL"
-                            } else {
-                                "FREE VOICE CALL • OPEN TO ALL"
-                            },
-                            color = OnlineGreen,
+                            text = phaseLabel,
+                            color = phaseTint,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp,
@@ -210,31 +227,50 @@ fun LiveCallOverlay(
 
                     val subtitleText = if (callState.phase == CallPhase.CONNECTED && callState.durationSeconds > 0) {
                         "${callState.statusLabel} • ${formatCallDuration(callState.durationSeconds)}"
+                    } else if (callState.phase == CallPhase.ENDED && callState.durationSeconds > 0) {
+                        "${callState.statusLabel} • Duration ${formatCallDuration(callState.durationSeconds)}"
                     } else {
                         callState.statusLabel
                     }
                     Text(
                         text = subtitleText,
-                        color = GoldLight,
+                        color = if (callState.phase == CallPhase.ENDED) AlertRed else GoldLight,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         textAlign = TextAlign.Center
                     )
                 }
 
-                // Center Avatar Stage when remote video is not yet rendering or audio call
-                if (callState.remoteVideoTrack == null || callState.callType != "VIDEO") {
+                // Center Avatar Stage when remote video is not yet rendering or audio call or ended
+                if (callState.remoteVideoTrack == null || callState.callType != "VIDEO" || callState.phase == CallPhase.ENDED) {
                     PulsingPeerAvatar(
                         peerName = callState.peerName,
                         peerPhotoUrl = callState.peerPhotoUrl,
-                        isRinging = callState.phase == CallPhase.RINGING_INCOMING || callState.phase == CallPhase.RINGING_OUTGOING
+                        isRinging = callState.phase == CallPhase.CALLING ||
+                            callState.phase == CallPhase.RINGING_INCOMING ||
+                            callState.phase == CallPhase.RINGING_OUTGOING
                     )
                 } else {
                     Spacer(modifier = Modifier.height(1.dp))
                 }
 
                 // Bottom Controls
-                if (callState.phase == CallPhase.RINGING_INCOMING) {
+                if (callState.phase == CallPhase.ENDED) {
+                    Button(
+                        onClick = onDismissEnded,
+                        shape = RoundedCornerShape(24.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MatteBlackSurfaceVariant,
+                            contentColor = TextWhite
+                        ),
+                        modifier = Modifier
+                            .padding(bottom = 18.dp)
+                            .height(50.dp)
+                            .testTag("dismiss_ended_call_button")
+                    ) {
+                        Text("Close", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    }
+                } else if (callState.phase == CallPhase.RINGING_INCOMING) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -253,13 +289,13 @@ fun LiveCallOverlay(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.CallEnd,
-                                    contentDescription = "Decline Call",
+                                    contentDescription = "Reject Call",
                                     tint = TextWhite,
                                     modifier = Modifier.size(30.dp)
                                 )
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Decline", color = TextMuted, fontSize = 13.sp)
+                            Text("Reject", color = TextMuted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
 
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -283,7 +319,7 @@ fun LiveCallOverlay(
                                 )
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Answer", color = GoldLight, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Accept", color = GoldLight, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 } else {

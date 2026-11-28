@@ -115,6 +115,7 @@ class RegressionRepairsTest {
         var loadMoreMembersCallCount = 0
         var boostMyProfileCallCount = 0
         var refreshActivityPostsCallCount = 0
+        var sendFriendRequestCallCount = 0
 
         override fun getCurrentUserId(): String? = currentUid
         override fun requireUserId(): String = currentUid ?: throw IllegalStateException("Not signed in")
@@ -265,6 +266,7 @@ class RegressionRepairsTest {
         override fun observeFriendRequests(): Flow<List<FriendRequest>> = friendRequestsFlow
 
         override suspend fun sendFriendRequest(targetUid: String) {
+            sendFriendRequestCallCount++
             val uid = requireUserId()
             val reqId = getFriendRequestIdForUsers(targetUid)
             val existing = friendRequestsFlow.value.firstOrNull { it.requestId == reqId }
@@ -1386,5 +1388,75 @@ class RegressionRepairsTest {
         assertTrue(vm.uiState.value.actionStatusMessage?.contains("boosted", ignoreCase = true) == true)
 
         collectJob.cancel()
+    }
+
+    @Test
+    fun friendRequests_preventDuplicateSendsAndSupportRejectIncomingRequest() = runTest {
+        val fake = FakeSogoDataSource(currentUid = "uid_me")
+        val bob = UserProfile(userId = "uid_bob", displayName = "Bob", age = 28)
+        val carla = UserProfile(userId = "uid_carla", displayName = "Carla", age = 25)
+        fake.membersFlow.value = listOf(bob, carla)
+
+        val vm = MainDashboardViewModel(app, fake)
+        val collectJob = backgroundScope.launch { vm.uiState.collect() }
+        advanceUntilIdle()
+
+        // First send hits repository
+        vm.sendFriendRequest("uid_bob")
+        advanceUntilIdle()
+        assertEquals(1, fake.sendFriendRequestCallCount)
+        assertEquals(FriendStatus.REQUEST_SENT, vm.uiState.value.friendStatusByUserId["uid_bob"])
+
+        // Second send while REQUEST_SENT must be ignored without hitting repository again
+        vm.sendFriendRequest("uid_bob")
+        advanceUntilIdle()
+        assertEquals(1, fake.sendFriendRequestCallCount)
+
+        // Incoming request from Carla can be rejected via removeFriendOrCancel
+        fake.friendRequestsFlow.value = fake.friendRequestsFlow.value + FriendRequest(
+            requestId = fake.getFriendRequestIdForUsers("uid_carla"),
+            requesterId = "uid_carla",
+            recipientId = "uid_me",
+            participantUids = listOf("uid_carla", "uid_me"),
+            status = "PENDING"
+        )
+        advanceUntilIdle()
+        assertEquals(FriendStatus.REQUEST_RECEIVED, vm.uiState.value.friendStatusByUserId["uid_carla"])
+
+        vm.removeFriendOrCancel("uid_carla")
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.friendStatusByUserId["uid_carla"])
+        assertTrue(vm.uiState.value.incomingFriendRequests.isEmpty())
+
+        collectJob.cancel()
+    }
+
+    @Test
+    fun callViewModel_endCurrentCallTransitionsToEndedAndDismissResetsToIdle() = runTest {
+        val fake = FakeSogoDataSource(currentUid = "uid_me")
+        val callVm = CallViewModel(app, fake)
+
+        fake.callSessionsFlow.value = listOf(
+            CallSession(
+                callId = "call_active_1",
+                callerId = "uid_alice",
+                callerName = "Alice",
+                calleeId = "uid_me",
+                calleeName = "Me",
+                participantUids = listOf("uid_alice", "uid_me"),
+                callType = "VIDEO",
+                status = "RINGING",
+                offerSdp = "v=0\r\n"
+            )
+        )
+        advanceUntilIdle()
+        assertEquals(CallPhase.RINGING_INCOMING, callVm.uiState.value.phase)
+
+        callVm.endCurrentCall()
+        assertEquals(CallPhase.ENDED, callVm.uiState.value.phase)
+        assertEquals("Call Ended", callVm.uiState.value.statusLabel)
+
+        callVm.dismissEndedCall()
+        assertEquals(CallPhase.IDLE, callVm.uiState.value.phase)
     }
 }

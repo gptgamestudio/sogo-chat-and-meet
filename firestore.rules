@@ -64,6 +64,7 @@ service cloud.firestore {
              (!('hobbies' in data) || data.hobbies == null || (data.hobbies is list && data.hobbies.size() <= 25 && (data.hobbies.size() == 0 || data.hobbies[0] is string))) &&
              (!('interests' in data) || data.interests == null || (data.interests is list && data.interests.size() <= 25 && (data.interests.size() == 0 || data.interests[0] is string))) &&
              (!('lookingFor' in data) || data.lookingFor == null || (data.lookingFor is string && data.lookingFor.size() <= 60)) &&
+             (!('relationshipStatus' in data) || data.relationshipStatus == null || (data.relationshipStatus is string && data.relationshipStatus.size() <= 40)) &&
              (!('preferredGender' in data) || data.preferredGender in ['ALL', 'Female', 'Male', 'Non-Binary']) &&
              (!('preferredMinAge' in data) || (data.preferredMinAge is int && data.preferredMinAge >= 18 && data.preferredMinAge <= 100)) &&
              (!('preferredMaxAge' in data) || (data.preferredMaxAge is int && data.preferredMaxAge >= 18 && data.preferredMaxAge <= 120)) &&
@@ -92,7 +93,7 @@ service cloud.firestore {
                        incoming().keys().hasOnly([
                          'userId', 'username', 'displayName', 'photoUrl', 'coverPhotoUrl', 'birthday',
                          'age', 'gender', 'country', 'city', 'aboutMe', 'personality', 'hobbies',
-                         'interests', 'lookingFor', 'preferredGender', 'preferredMinAge',
+                         'interests', 'lookingFor', 'relationshipStatus', 'preferredGender', 'preferredMinAge',
                          'preferredMaxAge', 'preferredCountry', 'isOnline',
                          'accountStatus', 'hideFromDiscovery',
                          'hideOnlineStatus', 'hideAge', 'hideLocation', 'role', 'lastActive',
@@ -113,7 +114,7 @@ service cloud.firestore {
                          incoming().diff(existing()).affectedKeys().hasOnly([
                            'username', 'displayName', 'photoUrl', 'coverPhotoUrl', 'birthday',
                            'age', 'gender', 'country', 'city', 'aboutMe', 'personality', 'hobbies',
-                           'interests', 'lookingFor', 'preferredGender', 'preferredMinAge',
+                           'interests', 'lookingFor', 'relationshipStatus', 'preferredGender', 'preferredMinAge',
                            'preferredMaxAge', 'preferredCountry', 'isOnline',
                            'hideFromDiscovery', 'hideOnlineStatus', 'hideAge', 'hideLocation',
                            'role', 'lastActive', 'updatedAt'

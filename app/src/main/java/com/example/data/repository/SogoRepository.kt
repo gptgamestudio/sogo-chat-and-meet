@@ -74,7 +74,8 @@ interface SogoDataSource {
         hideFromDiscovery: Boolean,
         hideOnlineStatus: Boolean,
         hideAge: Boolean,
-        hideLocation: Boolean
+        hideLocation: Boolean,
+        relationshipStatus: String? = null
     ) {}
     suspend fun updatePresence(isOnline: Boolean, force: Boolean = false)
     fun getConversationIdForUsers(otherUid: String): String
@@ -415,6 +416,7 @@ class SogoRepository(
         val safePhotoUrl = profile.photoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }
         val safeCoverPhotoUrl = profile.coverPhotoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 65000 }
         val safeLookingFor = profile.lookingFor?.trim()?.takeIf { it.isNotBlank() }?.take(60)
+        val safeRelationshipStatus = profile.relationshipStatus?.trim()?.takeIf { it.isNotBlank() }?.take(40)
         val safePreferredGender = profile.preferredGender.trim().takeIf {
             it in setOf("ALL", "Female", "Male", "Non-Binary")
         } ?: "ALL"
@@ -448,6 +450,7 @@ class SogoRepository(
             "hobbies" to safeHobbies,
             "interests" to safeInterests,
             "lookingFor" to safeLookingFor,
+            "relationshipStatus" to safeRelationshipStatus,
             "preferredGender" to safePreferredGender,
             "preferredMinAge" to safeMinAge,
             "preferredMaxAge" to safeMaxAge,
@@ -539,7 +542,8 @@ class SogoRepository(
         hideFromDiscovery: Boolean,
         hideOnlineStatus: Boolean,
         hideAge: Boolean,
-        hideLocation: Boolean
+        hideLocation: Boolean,
+        relationshipStatus: String?
     ) {
         val uid = requireUserId()
         val safeUsername = username?.trim()?.replace(Regex("[^a-zA-Z0-9_.]"), "")?.takeIf { it.isNotBlank() }?.take(32)
@@ -547,23 +551,25 @@ class SogoRepository(
         val safeMaxAge = preferredMaxAge.coerceIn(safeMinAge, 120)
         val safeGender = preferredGender.takeIf { it in setOf("ALL", "Female", "Male", "Non-Binary") } ?: "ALL"
         val docRef = db.collection("users").document(uid)
+        val updateMap = mutableMapOf<String, Any?>(
+            "username" to safeUsername,
+            "hobbies" to hobbies.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(25),
+            "lookingFor" to lookingFor?.trim()?.takeIf { it.isNotBlank() }?.take(60),
+            "preferredGender" to safeGender,
+            "preferredMinAge" to safeMinAge,
+            "preferredMaxAge" to safeMaxAge,
+            "preferredCountry" to preferredCountry.trim().ifBlank { "ALL" }.take(60),
+            "hideFromDiscovery" to hideFromDiscovery,
+            "hideOnlineStatus" to hideOnlineStatus,
+            "hideAge" to hideAge,
+            "hideLocation" to hideLocation,
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        if (relationshipStatus != null) {
+            updateMap["relationshipStatus"] = relationshipStatus.trim().takeIf { it.isNotBlank() }?.take(40)
+        }
         try {
-            docRef.update(
-                mapOf(
-                    "username" to safeUsername,
-                    "hobbies" to hobbies.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(25),
-                    "lookingFor" to lookingFor?.trim()?.takeIf { it.isNotBlank() }?.take(60),
-                    "preferredGender" to safeGender,
-                    "preferredMinAge" to safeMinAge,
-                    "preferredMaxAge" to safeMaxAge,
-                    "preferredCountry" to preferredCountry.trim().ifBlank { "ALL" }.take(60),
-                    "hideFromDiscovery" to hideFromDiscovery,
-                    "hideOnlineStatus" to hideOnlineStatus,
-                    "hideAge" to hideAge,
-                    "hideLocation" to hideLocation,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            docRef.update(updateMap).await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1480,10 +1486,11 @@ class SogoRepository(
 
     override suspend fun sendFriendRequest(targetUid: String) {
         val uid = requireUserId()
-        if (targetUid == uid) return
-        val reqId = getFriendRequestIdForUsers(targetUid)
+        val cleanTarget = targetUid.trim()
+        if (cleanTarget.isBlank() || cleanTarget == uid) return
+        val reqId = getFriendRequestIdForUsers(cleanTarget)
         val docRef = db.collection("friend_requests").document(reqId)
-        val participants = listOf(uid, targetUid).sorted()
+        val participants = listOf(uid, cleanTarget).sorted()
 
         try {
             val existingSnap = docRef.get().await()
@@ -1497,6 +1504,7 @@ class SogoRepository(
                         )
                     ).await()
                 }
+                // Request already PENDING or ACCEPTED; prevent duplicate friend requests
                 return
             }
 
@@ -1544,10 +1552,14 @@ class SogoRepository(
     }
 
     override suspend fun removeFriendOrRequest(otherUid: String) {
-        requireUserId()
-        val reqId = getFriendRequestIdForUsers(otherUid)
+        val uid = requireUserId()
+        val cleanOther = otherUid.trim()
+        if (cleanOther.isBlank() || cleanOther == uid) return
+        val reqId = getFriendRequestIdForUsers(cleanOther)
         val docRef = db.collection("friend_requests").document(reqId)
         try {
+            val existingSnap = docRef.get().await()
+            if (!existingSnap.exists()) return
             docRef.delete().await()
         } catch (e: CancellationException) {
             throw e

@@ -26,6 +26,7 @@ data class UserProfile(
     val hobbies: List<String> = emptyList(),
     val interests: List<String> = emptyList(),
     val lookingFor: String? = null,
+    val relationshipStatus: String? = null,
     val preferredGender: String = "ALL",
     val preferredMinAge: Int = 18,
     val preferredMaxAge: Int = 80,

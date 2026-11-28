@@ -342,7 +342,7 @@ fun PostLoginFlow(
                 isSaving = uiState.isSavingProfile,
                 externalErrorMessage = uiState.errorMessage,
                 onDismissError = { dashboardViewModel.clearError() },
-                onSaveProfile = { name, bday, age, gen, country, city, photo, about, personality, interests ->
+                onSaveFullProfile = { name, bday, age, gen, country, city, photo, about, personality, interests, relationshipStatus, lookingFor ->
                     dashboardViewModel.createOrUpdateProfile(
                         displayName = name,
                         birthday = bday,
@@ -353,7 +353,9 @@ fun PostLoginFlow(
                         photoUrl = photo,
                         aboutMe = about,
                         personality = personality,
-                        interests = interests
+                        interests = interests,
+                        lookingFor = lookingFor,
+                        relationshipStatus = relationshipStatus
                     )
                 },
                 onSignOut = {
@@ -443,7 +445,9 @@ fun TwoDestinationNavigator(
         previousCallPhase = curr
         val completedCallPhase = prev == CallPhase.CONNECTED ||
             prev == CallPhase.CONNECTING ||
-            prev == CallPhase.RINGING_OUTGOING
+            prev == CallPhase.RINGING_OUTGOING ||
+            prev == CallPhase.CALLING ||
+            prev == CallPhase.ENDED
         if (completedCallPhase && curr == CallPhase.IDLE) {
             adMobManager?.showInterstitialIfEligible(activity) {}
         }
@@ -625,6 +629,9 @@ fun TwoDestinationNavigator(
                             FriendStatus.FRIENDS -> dashboardViewModel.removeFriendOrCancel(partner.userId)
                         }
                     },
+                    onDeclineFriendRequest = {
+                        dashboardViewModel.removeFriendOrCancel(partner.userId)
+                    },
                     onToggleFollow = { dashboardViewModel.toggleFollow(partner.userId) },
                     onToggleFavorite = { dashboardViewModel.toggleFavorite(partner.userId) },
                     onToggleLike = { dashboardViewModel.toggleProfileLike(partner) },
@@ -661,7 +668,8 @@ fun TwoDestinationNavigator(
                 onToggleMute = { callViewModel.toggleMute() },
                 onToggleSpeaker = { callViewModel.toggleSpeaker() },
                 onToggleVideo = { callViewModel.toggleVideo() },
-                onSwitchCamera = { callViewModel.switchCamera() }
+                onSwitchCamera = { callViewModel.switchCamera() },
+                onDismissEnded = { callViewModel.dismissEndedCall() }
             )
         }
     }

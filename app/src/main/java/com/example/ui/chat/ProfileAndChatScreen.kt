@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PersonOutline
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Report
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Videocam
@@ -129,6 +130,7 @@ import com.example.data.model.FriendStatus
 import com.example.data.model.GalleryPhoto
 import com.example.data.model.UserProfile
 import com.example.ui.common.AllEmojisPickerDialog
+import com.example.ui.common.CountryFlagHelper
 import com.example.ui.common.MemberPresenceFormatter
 import com.example.ui.common.MemberPresenceStatusRow
 import com.example.ui.common.SogoEmojiCatalog
@@ -165,6 +167,7 @@ fun ProfileAndChatScreen(
     isFavorited: Boolean = false,
     isLiked: Boolean = false,
     onFriendActionClick: () -> Unit = {},
+    onDeclineFriendRequest: () -> Unit = {},
     onToggleFollow: () -> Unit = {},
     onToggleFavorite: () -> Unit = {},
     onToggleLike: () -> Unit = {},
@@ -863,6 +866,7 @@ fun ProfileAndChatScreen(
                     isBlocked = uiState.isBlocked,
                     isBlockedByMe = uiState.isBlockedByMe,
                     onFriendActionClick = onFriendActionClick,
+                    onDeclineFriendRequest = onDeclineFriendRequest,
                     onToggleFollow = onToggleFollow,
                     onToggleFavorite = onToggleFavorite,
                     onToggleLike = onToggleLike,
@@ -1365,6 +1369,7 @@ fun MemberProfileDetailsView(
     isBlocked: Boolean = false,
     isBlockedByMe: Boolean = false,
     onFriendActionClick: () -> Unit = {},
+    onDeclineFriendRequest: () -> Unit = {},
     onToggleFollow: () -> Unit = {},
     onToggleFavorite: () -> Unit = {},
     onToggleLike: () -> Unit = {},
@@ -1382,391 +1387,627 @@ fun MemberProfileDetailsView(
     val allTags = remember(partner) {
         (partner.interests + partner.hobbies).map { it.trim() }.filter { it.isNotBlank() }.distinct()
     }
+    val resolvedUsername = remember(partner.username, partner.displayName) {
+        partner.username?.trim()?.removePrefix("@")?.takeIf { it.isNotBlank() }
+            ?: partner.displayName.lowercase(Locale.ENGLISH).replace(Regex("[^a-z0-9._]"), "").ifBlank { "member" }
+    }
+    val resolvedRelationshipStatus = remember(partner.relationshipStatus) {
+        partner.relationshipStatus?.trim()?.takeIf { it.isNotBlank() } ?: "Single"
+    }
+    val resolvedLookingFor = remember(partner.lookingFor) {
+        partner.lookingFor?.trim()?.takeIf { it.isNotBlank() } ?: "Genuine connections"
+    }
+    val locationDisplay = remember(partner.hideLocation, partner.country, partner.city) {
+        if (partner.hideLocation) {
+            "Location hidden"
+        } else {
+            CountryFlagHelper.formatCountryWithFlag(partner.country, partner.city)
+        }
+    }
 
-    Column(
+    var showCancelPendingDialog by remember { mutableStateOf(false) }
+    var showUnfriendDialog by remember { mutableStateOf(false) }
+
+    if (showCancelPendingDialog) {
+        AlertDialog(
+            onDismissRequest = { showCancelPendingDialog = false },
+            title = { Text("Friend Request Pending", color = TextWhite) },
+            text = {
+                Text(
+                    "Your friend request to ${partner.displayName} is pending acceptance. Would you like to cancel it?",
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCancelPendingDialog = false
+                        onDeclineFriendRequest()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AlertRed)
+                ) {
+                    Text("Cancel Request", color = TextWhite)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelPendingDialog = false }) {
+                    Text("Keep Pending", color = GoldLight)
+                }
+            },
+            containerColor = MatteBlackSurface
+        )
+    }
+
+    if (showUnfriendDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnfriendDialog = false },
+            title = { Text("Connected as Friends", color = TextWhite) },
+            text = {
+                Text(
+                    "You and ${partner.displayName} are friends. Remove from your friends list?",
+                    color = TextMuted
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUnfriendDialog = false
+                        onDeclineFriendRequest()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AlertRed)
+                ) {
+                    Text("Unfriend", color = TextWhite)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnfriendDialog = false }) {
+                    Text("Keep Friend", color = GoldLight)
+                }
+            },
+            containerColor = MatteBlackSurface
+        )
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        contentAlignment = Alignment.TopCenter
     ) {
-        // Hero Photo Card
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = MatteBlackCard),
-            border = CardDefaults.outlinedCardBorder().copy(
-                brush = Brush.horizontalGradient(listOf(OutlineGold, BurgundyPrimary))
-            ),
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(300.dp)
+                .widthIn(max = 520.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (!partner.photoUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(partner.photoUrl)
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = "${partner.displayName}'s photo",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.linearGradient(listOf(BurgundyPrimary, Color(0xFF1A050B)))
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = partner.displayName.take(1).uppercase(),
-                            color = GoldLight,
-                            fontSize = 72.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                // Gradient Overlay
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Transparent, MatteBlackCard.copy(alpha = 0.95f))
-                            )
-                        )
-                )
-
-                // Badges
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = BurgundyDark.copy(alpha = 0.9f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = GoldLight,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "18+ COMMUNITY",
-                                color = GoldLight,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = MatteBlackSurface.copy(alpha = 0.9f),
-                        border = CardDefaults.outlinedCardBorder().copy(
-                            brush = Brush.horizontalGradient(
-                                if (partnerIsOnline) listOf(OnlineGreen, Color(0xFF00796B))
-                                else listOf(OutlineSubtle, OutlineSubtle)
-                            )
-                        )
-                    ) {
-                        MemberPresenceStatusRow(
-                            member = partner,
-                            dotSize = 9.dp,
-                            fontSize = 11.sp,
-                            showOnlineHalo = true,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
-                }
-
-                // Name, Username, Looking For & Location Banner
+            // Centered, Moderate-Size Social Profile Card
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MatteBlackCard),
+                border = BorderStroke(
+                    1.2.dp,
+                    Brush.horizontalGradient(listOf(OutlineGold, BurgundyPrimary, OutlineGold))
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("centered_social_profile_card")
+            ) {
                 Column(
                     modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(16.dp)
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = partner.displayName,
-                            color = TextWhite,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (!partner.hideAge) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "${partner.age}",
-                                color = GoldLight,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.SemiBold
+                    // Top Community & Presence Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = BurgundyDark.copy(alpha = 0.9f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = GoldLight,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "18+ COMMUNITY",
+                                    color = GoldLight,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MatteBlackSurface,
+                            border = BorderStroke(
+                                1.dp,
+                                if (!partner.hideOnlineStatus && partnerIsOnline) OnlineGreen else OutlineSubtle
+                            )
+                        ) {
+                            MemberPresenceStatusRow(
+                                member = partner,
+                                dotSize = 9.dp,
+                                fontSize = 11.sp,
+                                showOnlineHalo = true,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                             )
                         }
                     }
-                    if (!partner.username.isNullOrBlank()) {
-                        Text(
-                            text = "@${partner.username.removePrefix("@")}",
-                            color = GoldAccent,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Centered Circular Profile Photo
+                    Box(
+                        contentAlignment = Alignment.BottomEnd,
+                        modifier = Modifier.size(120.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(CircleShape)
+                                .border(
+                                    3.dp,
+                                    Brush.linearGradient(listOf(GoldLight, BurgundyPrimary, GoldAccent)),
+                                    CircleShape
+                                )
+                                .background(MatteBlackSurface),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (!partner.photoUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(LocalContext.current)
+                                        .data(partner.photoUrl)
+                                        .crossfade(true)
+                                        .build(),
+                                    contentDescription = "${partner.displayName}'s profile photo",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Text(
+                                    text = partner.displayName.take(1).uppercase(),
+                                    color = GoldLight,
+                                    fontSize = 44.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        if (!partner.hideOnlineStatus && partnerIsOnline) {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(OnlineGreen)
+                                    .border(3.dp, MatteBlackCard, CircleShape)
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Name, Age & Username
+                    Text(
+                        text = if (partner.hideAge) {
+                            partner.displayName
+                        } else {
+                            "${partner.displayName}, ${partner.age}"
+                        },
+                        color = TextWhite,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    Text(
+                        text = "@$resolvedUsername",
+                        color = GoldAccent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.testTag("profile_username_text")
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Country + Flag & Gender line
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Icon(
-                            imageVector = Icons.Default.LocationOn,
+                            imageVector = if (partner.hideLocation) Icons.Default.Lock else Icons.Default.Public,
                             contentDescription = null,
                             tint = GoldAccent,
                             modifier = Modifier.size(15.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            text = if (partner.hideLocation) "Location hidden" else "${partner.city ?: "Manila"}, ${partner.country}",
+                            text = locationDisplay,
                             color = TextMuted,
-                            fontSize = 13.sp
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "• ${partner.gender}",
+                            text = "  •  ${partner.gender}",
                             color = TextDim,
                             fontSize = 13.sp
                         )
                     }
-                    if (!partner.lookingFor.isNullOrBlank()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Looking for: ${partner.lookingFor}",
-                            color = GoldLight,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Structured Profile Summary Pills (Age, Relationship Status, Looking For)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        ProfileInfoChip(
+                            label = "Age",
+                            value = if (partner.hideAge) "Private" else "${partner.age} yrs"
                         )
+                        ProfileInfoChip(
+                            label = "Status",
+                            value = resolvedRelationshipStatus
+                        )
+                        ProfileInfoChip(
+                            label = "Looking for",
+                            value = resolvedLookingFor
+                        )
+                    }
+
+                    if (allTags.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            allTags.take(6).forEach { tag ->
+                                val isMutual = mutualInterests.any { it.equals(tag, ignoreCase = true) }
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isMutual) OnlineGreen.copy(alpha = 0.14f) else MatteBlackSurfaceVariant,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isMutual) OnlineGreen.copy(alpha = 0.7f) else OutlineSubtle
+                                    )
+                                ) {
+                                    Text(
+                                        text = if (isMutual) "★ $tag" else tag,
+                                        color = if (isMutual) OnlineGreen else TextMuted,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Three Prominent Connection Buttons: 1. Add Friend, 2. Chat Now, 3. Video Call Now
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // 1. Add Friend (supports Add Friend -> Pending -> Accept/Reject -> Friends)
+                        if (isBlocked) {
+                            OutlinedButton(
+                                onClick = {},
+                                enabled = false,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 50.dp)
+                                    .testTag("profile_add_friend_button"),
+                                shape = RoundedCornerShape(25.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    disabledContainerColor = MatteBlackSurfaceVariant,
+                                    disabledContentColor = TextDim
+                                ),
+                                border = BorderStroke(1.dp, OutlineSubtle)
+                            ) {
+                                Icon(imageVector = Icons.Default.Block, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Add Friend (Restricted)", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else if (friendStatus == FriendStatus.REQUEST_RECEIVED) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Button(
+                                    onClick = onFriendActionClick,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 50.dp)
+                                        .testTag("profile_add_friend_button"),
+                                    shape = RoundedCornerShape(25.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = OnlineGreen,
+                                        contentColor = MatteBlackBackground
+                                    )
+                                ) {
+                                    Icon(imageVector = Icons.Default.Check, contentDescription = "Accept Friend Request", modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Accept Request", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = onDeclineFriendRequest,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 50.dp)
+                                        .testTag("profile_reject_friend_button"),
+                                    shape = RoundedCornerShape(25.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = MatteBlackSurface,
+                                        contentColor = AlertRed
+                                    ),
+                                    border = BorderStroke(1.dp, AlertRed.copy(alpha = 0.75f))
+                                ) {
+                                    Icon(imageVector = Icons.Default.Close, contentDescription = "Reject Friend Request", modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Reject", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        } else {
+                            val friendLabel = when (friendStatus) {
+                                FriendStatus.NONE -> "Add Friend"
+                                FriendStatus.REQUEST_SENT -> "Pending"
+                                FriendStatus.FRIENDS -> "Friends"
+                                FriendStatus.REQUEST_RECEIVED -> "Accept"
+                            }
+                            val friendIcon = when (friendStatus) {
+                                FriendStatus.NONE -> Icons.Default.PersonAdd
+                                FriendStatus.REQUEST_SENT -> Icons.Default.HourglassTop
+                                FriendStatus.FRIENDS -> Icons.Default.HowToReg
+                                FriendStatus.REQUEST_RECEIVED -> Icons.Default.Check
+                            }
+                            val friendTint = when (friendStatus) {
+                                FriendStatus.NONE -> GoldLight
+                                FriendStatus.REQUEST_SENT -> GoldAccent
+                                FriendStatus.FRIENDS,
+                                FriendStatus.REQUEST_RECEIVED -> OnlineGreen
+                            }
+                            val friendBorder = when (friendStatus) {
+                                FriendStatus.NONE -> OutlineGold
+                                FriendStatus.REQUEST_SENT -> GoldAccent
+                                FriendStatus.FRIENDS,
+                                FriendStatus.REQUEST_RECEIVED -> OnlineGreen
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    when (friendStatus) {
+                                        FriendStatus.NONE -> onFriendActionClick()
+                                        FriendStatus.REQUEST_SENT -> showCancelPendingDialog = true
+                                        FriendStatus.FRIENDS -> showUnfriendDialog = true
+                                        FriendStatus.REQUEST_RECEIVED -> onFriendActionClick()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 50.dp)
+                                    .testTag("profile_add_friend_button"),
+                                shape = RoundedCornerShape(25.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = if (friendStatus == FriendStatus.REQUEST_SENT) {
+                                        MatteBlackSurfaceVariant
+                                    } else {
+                                        MatteBlackSurface
+                                    },
+                                    contentColor = friendTint
+                                ),
+                                border = BorderStroke(1.2.dp, friendBorder)
+                            ) {
+                                Icon(
+                                    imageVector = friendIcon,
+                                    contentDescription = friendLabel,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(text = friendLabel, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        // 2 & 3: Chat Now & Video Call Now side by side on moderate card
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = onStartChat,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 50.dp)
+                                    .testTag("start_private_conversation_button"),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isBlocked) Color(0xFF3A1219) else BurgundyPrimary,
+                                    contentColor = TextWhite
+                                ),
+                                shape = RoundedCornerShape(25.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isBlocked) AlertRed else GoldAccent
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = if (isBlocked) Icons.Default.Block else Icons.Default.Chat,
+                                    contentDescription = "Chat Now",
+                                    tint = if (isBlocked) AlertRed else GoldLight,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isBlocked) "Restricted" else "Chat Now",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                            }
+
+                            Button(
+                                onClick = onStartVideoCall,
+                                enabled = !isBlocked,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 50.dp)
+                                    .testTag("profile_video_call_button"),
+                                shape = RoundedCornerShape(25.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = OnlineGreen.copy(alpha = 0.22f),
+                                    contentColor = OnlineGreen,
+                                    disabledContainerColor = MatteBlackSurfaceVariant,
+                                    disabledContentColor = TextDim
+                                ),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isBlocked) OutlineSubtle else OnlineGreen
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Videocam,
+                                    contentDescription = "Video Call Now",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Video Call Now",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-        // Quick Actions Row: Add Friend & Free Video Call
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            val (friendLabel, friendIcon) = when (friendStatus) {
-                FriendStatus.NONE -> "Add Friend" to Icons.Default.PersonAdd
-                FriendStatus.REQUEST_SENT -> "Request Sent" to Icons.Default.HourglassTop
-                FriendStatus.REQUEST_RECEIVED -> "Accept Friend" to Icons.Default.Check
-                FriendStatus.FRIENDS -> "Friends" to Icons.Default.HowToReg
-            }
-            OutlinedButton(
-                onClick = onFriendActionClick,
-                enabled = !isBlocked,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(50.dp)
-                    .testTag("profile_add_friend_button"),
-                shape = RoundedCornerShape(25.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = MatteBlackSurface,
-                    contentColor = if (friendStatus == FriendStatus.REQUEST_RECEIVED) OnlineGreen else GoldLight,
-                    disabledContainerColor = MatteBlackSurfaceVariant,
-                    disabledContentColor = TextDim
-                ),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    when {
-                        isBlocked -> OutlineSubtle
-                        friendStatus == FriendStatus.REQUEST_RECEIVED -> OnlineGreen
-                        else -> OutlineGold
-                    }
-                )
+            // Social Engagement Row: Like, Follow, Favorite, Say Hi
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(imageVector = friendIcon, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(text = if (isBlocked) "Blocked" else friendLabel, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                OutlinedButton(
+                    onClick = onToggleLike,
+                    enabled = !isBlocked,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("profile_like_button"),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isLiked) BurgundyPrimary else MatteBlackSurface,
+                        contentColor = if (isLiked) GoldLight else TextWhite
+                    ),
+                    border = BorderStroke(1.dp, if (isLiked) GoldAccent else OutlineSubtle)
+                ) {
+                    Icon(
+                        imageVector = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = "Like profile",
+                        tint = if (isLiked) Color(0xFFFF4D6D) else GoldAccent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (isLiked) "Liked" else "Like", fontSize = 11.sp, maxLines = 1)
+                }
+
+                OutlinedButton(
+                    onClick = onToggleFollow,
+                    enabled = !isBlocked,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("profile_follow_button"),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isFollowing) BurgundyDark else MatteBlackSurface,
+                        contentColor = if (isFollowing) GoldLight else TextWhite
+                    ),
+                    border = BorderStroke(1.dp, if (isFollowing) GoldAccent else OutlineSubtle)
+                ) {
+                    Icon(
+                        imageVector = if (isFollowing) Icons.Default.HowToReg else Icons.Default.PersonOutline,
+                        contentDescription = "Follow member",
+                        tint = GoldAccent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (isFollowing) "Following" else "Follow", fontSize = 11.sp, maxLines = 1)
+                }
+
+                OutlinedButton(
+                    onClick = onToggleFavorite,
+                    enabled = !isBlocked,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("profile_favorite_button"),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isFavorited) BurgundyDark else MatteBlackSurface,
+                        contentColor = if (isFavorited) GoldLight else TextWhite
+                    ),
+                    border = BorderStroke(1.dp, if (isFavorited) GoldAccent else OutlineSubtle)
+                ) {
+                    Icon(
+                        imageVector = if (isFavorited) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = "Favorite member",
+                        tint = GoldLight,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (isFavorited) "Saved" else "Fav", fontSize = 11.sp, maxLines = 1)
+                }
+
+                OutlinedButton(
+                    onClick = onSayHi,
+                    enabled = !isBlocked,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("profile_say_hi_button"),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = MatteBlackSurface,
+                        contentColor = OnlineGreen
+                    ),
+                    border = BorderStroke(1.dp, if (isBlocked) OutlineSubtle else OnlineGreen.copy(alpha = 0.7f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.WavingHand,
+                        contentDescription = "Say Hi",
+                        tint = if (isBlocked) TextDim else OnlineGreen,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Hi!", fontSize = 11.sp, maxLines = 1, fontWeight = FontWeight.Bold)
+                }
             }
-
-            Button(
-                onClick = onStartVideoCall,
-                enabled = !isBlocked,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(50.dp)
-                    .testTag("profile_video_call_button"),
-                shape = RoundedCornerShape(25.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = OnlineGreen.copy(alpha = 0.2f),
-                    contentColor = OnlineGreen,
-                    disabledContainerColor = MatteBlackSurfaceVariant,
-                    disabledContentColor = TextDim
-                ),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isBlocked) OutlineSubtle else OnlineGreen
-                )
-            ) {
-                Icon(imageVector = Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(text = "Free Video Call", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Social Engagement Row: Like, Follow, Favorite, Say Hi
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(
-                onClick = onToggleLike,
-                enabled = !isBlocked,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .testTag("profile_like_button"),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 6.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = if (isLiked) BurgundyPrimary else MatteBlackSurface,
-                    contentColor = if (isLiked) GoldLight else TextWhite
-                ),
-                border = BorderStroke(1.dp, if (isLiked) GoldAccent else OutlineSubtle)
-            ) {
-                Icon(
-                    imageVector = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                    contentDescription = "Like profile",
-                    tint = if (isLiked) Color(0xFFFF4D6D) else GoldAccent,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(if (isLiked) "Liked" else "Like", fontSize = 11.sp, maxLines = 1)
-            }
-
-            OutlinedButton(
-                onClick = onToggleFollow,
-                enabled = !isBlocked,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .testTag("profile_follow_button"),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 6.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = if (isFollowing) BurgundyDark else MatteBlackSurface,
-                    contentColor = if (isFollowing) GoldLight else TextWhite
-                ),
-                border = BorderStroke(1.dp, if (isFollowing) GoldAccent else OutlineSubtle)
-            ) {
-                Icon(
-                    imageVector = if (isFollowing) Icons.Default.HowToReg else Icons.Default.PersonOutline,
-                    contentDescription = "Follow member",
-                    tint = GoldAccent,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(if (isFollowing) "Following" else "Follow", fontSize = 11.sp, maxLines = 1)
-            }
-
-            OutlinedButton(
-                onClick = onToggleFavorite,
-                enabled = !isBlocked,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .testTag("profile_favorite_button"),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 6.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = if (isFavorited) BurgundyDark else MatteBlackSurface,
-                    contentColor = if (isFavorited) GoldLight else TextWhite
-                ),
-                border = BorderStroke(1.dp, if (isFavorited) GoldAccent else OutlineSubtle)
-            ) {
-                Icon(
-                    imageVector = if (isFavorited) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                    contentDescription = "Favorite member",
-                    tint = GoldLight,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(if (isFavorited) "Saved" else "Fav", fontSize = 11.sp, maxLines = 1)
-            }
-
-            OutlinedButton(
-                onClick = onSayHi,
-                enabled = !isBlocked,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp)
-                    .testTag("profile_say_hi_button"),
-                shape = RoundedCornerShape(16.dp),
-                contentPadding = PaddingValues(horizontal = 6.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = MatteBlackSurface,
-                    contentColor = OnlineGreen
-                ),
-                border = BorderStroke(1.dp, if (isBlocked) OutlineSubtle else OnlineGreen.copy(alpha = 0.7f))
-            ) {
-                Icon(
-                    imageVector = Icons.Default.WavingHand,
-                    contentDescription = "Say Hi",
-                    tint = if (isBlocked) TextDim else OnlineGreen,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Hi!", fontSize = 11.sp, maxLines = 1, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Start Private Conversation Button (Requirement 5)
-        Button(
-            onClick = onStartChat,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-                .testTag("start_private_conversation_button"),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isBlocked) Color(0xFF3A1219) else BurgundyPrimary,
-                contentColor = TextWhite
-            ),
-            shape = RoundedCornerShape(26.dp),
-            border = ButtonDefaults.outlinedButtonBorder.copy(
-                brush = Brush.horizontalGradient(
-                    if (isBlocked) listOf(AlertRed, AlertRed) else listOf(GoldAccent, GoldLight)
-                )
-            )
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (isBlocked) Icons.Default.Block else Icons.Default.Chat,
-                    contentDescription = null,
-                    tint = if (isBlocked) AlertRed else GoldLight,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = if (isBlocked) "Chat Restricted (Blocked)" else "Chat Now",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextWhite
-                )
-            }
-        }
 
         if (partnerGalleryPhotos.isNotEmpty()) {
             Spacer(modifier = Modifier.height(14.dp))
@@ -1959,6 +2200,37 @@ fun MemberProfileDetailsView(
         }
 
         Spacer(modifier = Modifier.height(84.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProfileInfoChip(
+    label: String,
+    value: String
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MatteBlackSurface,
+        border = BorderStroke(1.dp, OutlineSubtle)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "$label: ",
+                color = GoldAccent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = value,
+                color = TextWhite,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 
